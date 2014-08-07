@@ -1,6 +1,11 @@
+Luaw
+=====
+***
 Luaw stands for Lua Webserver. In a happy coincidence it also matches abbreviation for an air traffic controller command (line up and wait) that closely resembles the way it handles multiple requests using event loop :)
-Luaw is an event driven, non blocking IO based server inspired by node.js. It uses
-node.js's excellent libuv library to do non-blocking IO but it takes advantage of Lua's first class coroutine support to avoid callback hell. This makes writing async IO code exactly same as normal sequential code while all the heavy-lifting of application state management usually associated with event driven IO is transparently handled by Lua's excellent coroutine support.
+
+Luaw is an event driven, non blocking IO based server inspired by node.js. It uses node.js's excellent libuv library to do non-blocking IO but it takes advantage of Lua's first class coroutine support to avoid callback hell. This makes writing async IO code exactly same as normal sequential code while all the heavy-lifting of application state management usually associated with event driven IO is transparently handled by Lua's excellent coroutine support.
+
+
 It includes,
 
 
@@ -18,6 +23,7 @@ It includes,
 8.  Log4j like logging framework with configurable log levels, log file size limits and automatic log rotation with syslog integration out of the box
 
 ##How To Build
+***
 Luaw use [luarocks](http://www.luarocks.org) as its build system. You need following artifacts to build it:
 
 
@@ -29,7 +35,7 @@ Once you have all the three from above, change to ~/luaw directory on your syste
 
 
 ##How to run
-
+***
 
 1. Lua uses [LUA_PATH](http://www.lua.org/pil/8.1.html) to locate Lua scripts and modules to run. Export environmental variable [LUA_PATH](http://www.lua.org/pil/8.1.html) - either using start up file like .bash_profile or from the command line - that includes ~/luaw/lib and current directory like this:
 > export LUA_PATH="?;?.lua;/home/John/GitHub/luaw/lib/?;/home/John/GitHub/luaw/lib/?.lua"
