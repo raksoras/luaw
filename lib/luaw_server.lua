@@ -1,4 +1,3 @@
--- Fidelity 401K: 800-603-4015
 local luaw_lib = require("luaw_lib")
 local ds_lib = require('luaw_data_structs_lib')
 local logging = require('luaw_logging')
