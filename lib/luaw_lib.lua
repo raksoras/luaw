@@ -1,7 +1,6 @@
 local lfs = require('lfs')
-local testing = require('unit_testing')
 
-local luaw_open_lib, err = package.loadlib('/Users/saroskar/luaw/lib_luaw.so', 'luaw_open_lib')
+local luaw_open_lib, err = package.loadlib('/apps/luaw/lib_luaw.so', 'luaw_open_lib')
 if not luaw_open_lib then
 	error(err)
 end

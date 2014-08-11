@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 
 #include <sys/socket.h>
@@ -44,7 +45,7 @@ static void close_if_open(uv_handle_t* handle, uv_close_cb close_cb) {
     }
 }
 
-static void clear_user_timer(timer_t* timer) {
+static void clear_user_timer(luaw_timer_t* timer) {
     timer->state = INIT;
     timer->lua_tid = 0;
 }
@@ -55,7 +56,7 @@ int new_user_timer(lua_State* l_thread) {
         raise_lua_error(l_thread, "Could not allocate memory for user timer lua reference");
     }
 
-    timer_t *timer = (timer_t *)malloc(sizeof(timer_t));
+    luaw_timer_t *timer = (luaw_timer_t *)malloc(sizeof(luaw_timer_t));
     ref->timer = timer;
     if (timer == NULL) {
         return raise_lua_error(l_thread, "Could not allocate memory for user timer");
@@ -68,7 +69,7 @@ int new_user_timer(lua_State* l_thread) {
     return 1;
 }
 
-static timer_t* get_timer(lua_State *l_thread, int timer_idx) {
+static luaw_timer_t* get_timer(lua_State *l_thread, int timer_idx) {
     luaw_timer_ref_t* ref = luaL_checkudata(l_thread, timer_idx, LUA_USER_TIMER_META_TABLE);
     if ((ref == NULL)||(ref->timer == NULL)){
         raise_lua_error(l_thread, "Timer missing."); //never returns, longjmp
@@ -81,8 +82,8 @@ Success, timer elapsed:  status = true, timer_elapsed = true
 Success, timer not elapsed:  status = true, timer_elapsed = false
 Failure:  status = false, error message
 */
-LIBUV_CALLBACK static void on_user_timer_timeout(uv_timer_t* handle, int status) {
-    timer_t* timer = (timer_t*)handle->data;
+LIBUV_CALLBACK static void on_user_timer_timeout(uv_timer_t* handle) {
+    luaw_timer_t* timer = (luaw_timer_t*)handle->data;
 
     if(timer->lua_tid) {
         lua_settop(l_global, 0);
@@ -91,13 +92,13 @@ LIBUV_CALLBACK static void on_user_timer_timeout(uv_timer_t* handle, int status)
         clear_user_timer(timer);
                 
         /* Lua call spec: status, time_elapsed/error message = timer:wait() */
-        if (status) {
-            lua_pushboolean(l_global, 0);
-            lua_pushstring(l_global, uv_strerror(status));
-        } else {
+//        if (status) {
+//            lua_pushboolean(l_global, 0);
+//            lua_pushstring(l_global, uv_strerror(status));
+//        } else {
             lua_pushboolean(l_global, 1);
             lua_pushboolean(l_global, 1);
-        }
+//        }
         lua_pcall(l_global, 3, 1, 0);
     } else {
         timer->state = ELAPSED;
@@ -109,7 +110,7 @@ Success:  status(true), nil = timer:start(timeout)
 Failure:  status(false), error message = timer:start(timeout)
 */
 static int start_user_timer(lua_State* l_thread) {
-    timer_t* timer = get_timer(l_thread, 1);
+    luaw_timer_t* timer = get_timer(l_thread, 1);
     
     if (timer->state != INIT) {
         /* Timer is already started by another lua thread */
@@ -137,7 +138,7 @@ Success, timer not elapsed:  status = true, timer_elapsed = false
 Failure:  status = false, error message
 */
 int wait_user_timer(lua_State* l_thread) {
-    timer_t* timer = get_timer(l_thread, 1);
+    luaw_timer_t* timer = get_timer(l_thread, 1);
     
     if (timer->state == ELAPSED) {
         clear_user_timer(timer);
@@ -165,7 +166,7 @@ int wait_user_timer(lua_State* l_thread) {
 
 /* lua call spec: timer:stop() */
 static int stop_user_timer(lua_State* l_thread) {
-    timer_t* timer = get_timer(l_thread, 1);
+    luaw_timer_t* timer = get_timer(l_thread, 1);
     if (timer->state == TICKING) {
         uv_timer_stop(&timer->handle);
         clear_user_timer(timer);  
@@ -175,7 +176,7 @@ static int stop_user_timer(lua_State* l_thread) {
 
 LIBUV_CALLBACK static void on_user_timer_close(uv_handle_t* handle) {
     if (handle) {
-        timer_t* timer = TO_TIMER(handle);
+        luaw_timer_t* timer = TO_TIMER(handle);
         if (timer) {
             if (timer->lua_tid) {
                 /* unblock waiting thread */
@@ -196,7 +197,7 @@ LIBUV_CALLBACK static void on_user_timer_close(uv_handle_t* handle) {
 LUA_OBJ_METHOD static int timer_ref_gc(lua_State *L) {
     luaw_timer_ref_t* ref= (luaw_timer_ref_t*) luaL_testudata(L, 1, LUA_USER_TIMER_META_TABLE);
     if (ref && ref->timer) {
-        timer_t* timer = ref->timer;
+        luaw_timer_t* timer = ref->timer;
         ref->timer = NULL;       //don't free it twice!
         close_if_active((uv_handle_t*)&timer->handle, on_user_timer_close);
     }
@@ -306,7 +307,7 @@ static inline void close_connection(connection_t* conn) {
     }
 }
 
-LIBUV_CALLBACK static void on_timeout(uv_timer_t* timer, int status) {
+LIBUV_CALLBACK static void on_timeout(uv_timer_t* timer) {
     /* Either connect,read or write timed out, close the connection */
     connection_t* conn = TO_CONNECTION(timer);
     close_connection(conn);

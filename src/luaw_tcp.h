@@ -70,17 +70,17 @@ typedef struct {
     uv_timer_t handle;
     timer_state state;
     int lua_tid;            /* id of a lua thread waiting on this timer */
-} timer_t;
+} luaw_timer_t;
 
 typedef struct luaw_timer_ref {
-    timer_t* timer;
+    luaw_timer_t* timer;
 } luaw_timer_ref_t;
 
 
 #define CHUNK_HEADER_LEN 6 //4 hex digits for chunk sizes up to 64K + 2 for \r\n
 #define MAX_CONNECTION_BUFF_SIZE 65536  //16^4
 #define TO_CONNECTION(handle)   (connection_t*)handle->data
-#define TO_TIMER(handle)        (timer_t*)handle->data
+#define TO_TIMER(handle)        (luaw_timer_t*)handle->data
 #define LUA_SERVER_META_TABLE "_luaw_server_MT_"
 
 #define FN_REFS(L, scd_stk_id, fname, refvar)    \
