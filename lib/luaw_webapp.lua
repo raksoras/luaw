@@ -11,18 +11,20 @@ local STRING_PATH_PARAM = { start = string.byte(":"), valueOf = tostring }
 local NUM_PATH_PARAM = { start = string.byte("#"), valueOf = tonumber }
 
 local function findFiles(path, pattern, matches)
-    for file in lfs.dir(path) do
-        if (file ~= '.' and file ~= '..') then
-            local f = path..DIR_SEPARATOR..file
-            local attrs = lfs.attributes(f)
-            if attrs then
-                local mode = attrs.mode
-                if mode == 'file' then
-                    if (string.match(f, pattern)) then
-                        table.insert(matches, f)
+    if (path and pattern) then
+        for file in lfs.dir(path) do
+            if (file ~= '.' and file ~= '..') then
+                local f = path..DIR_SEPARATOR..file
+                local attrs = lfs.attributes(f)
+                if attrs then
+                    local mode = attrs.mode
+                    if mode == 'file' then
+                        if (string.match(f, pattern)) then
+                            table.insert(matches, f)
+                        end
+                    elseif mode == 'directory' then
+                        findFiles(f, pattern, matches)
                     end
-                elseif mode == 'directory' then
-                    findFiles(f, pattern, matches)
                 end
             end
         end
