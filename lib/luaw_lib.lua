@@ -220,27 +220,32 @@ local function headersDone(req)
 end
 
 local function parseParams(req)
-    local params = rawget(req, 'params')
-    if params then return params end
+    if (req.luaw_mesg_type == 'sreq') then
+        local params = rawget(req, 'params')
+        if params then return params end
     
-    if not params then
-        params = luaw_lib.createDict(0, 16)
-    end
-    
-    -- POST form params
-    local contentType = req.headers['Content-Type']
-    if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
-        local status, errMesg = luaw_lib:urlDecode(req.body, params)
-    end
-    
-    -- GET query params
-    local queryString = req:getParsedURL().queryString
-    if queryString then
-        luaw_lib:urlDecode(queryString, params)
-    end
+        if not params then
+            params = luaw_lib.createDict(0, 16)
+        end
 
-    req.params = params
-    return params
+        -- POST form params
+        local contentType = req.headers['Content-Type']
+        if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
+            local status, errMesg = luaw_lib:urlDecode(req.body, params)
+        end
+
+        -- GET query params
+        local url = req:getParsedURL()
+        if url then
+            local queryString = url.queryString
+            if queryString then
+                luaw_lib:urlDecode(queryString, params)
+            end
+        end
+
+        req.params = params
+        return params
+    end
 end
 
 local function readFull(req)
@@ -250,7 +255,7 @@ local function readFull(req)
     while (not mesgDone) do
         headersDone, mesgDone = req:readAndParse()
     end
- 
+
     local bodyChunks = rawget(req, 'bodyChunks')
     local body = ""
     if (bodyChunks) then
@@ -260,8 +265,8 @@ local function readFull(req)
         req.bodyChunks = nil
     end
 
-    req.body = body    
-    parseParams(req)    
+    req.body = body 
+    parseParams(req)
     return body
 end
 
@@ -381,6 +386,23 @@ local function bufferAndWrite(conn, str, isChunked, writeTimeout)
     end
 end
 
+local function writeHeaders(conn, resp)
+    local headers = resp.headers
+    if (headers) then
+        for name,value in pairs(headers) do
+            if (type(value) == 'table') then 
+                for i,v in ipairs(value) do
+                    bufferAndWrite(conn, tostring(name) .. ": " .. tostring(v) .. CRLF, resp.writeTimeout)
+                end
+            else
+                bufferAndWrite(conn, tostring(name) .. ": " .. tostring(value) .. CRLF, resp.writeTimeout)
+            end
+            headers[name] = nil
+        end
+    end
+    bufferAndWrite(conn, CRLF, resp.writeTimeout)
+end
+
 local function startStreaming(resp)
     resp.luaw_is_chunked = true
     resp:addHeader('Transfer-Encoding', 'chunked')
@@ -388,12 +410,7 @@ local function startStreaming(resp)
     local conn = resp.luaw_conn
     bufferAndWrite(conn, resp:firstLine(), resp.writeTimeout)
     
-    local headers = resp.headers
-    for name,value in pairs(headers) do
-        bufferAndWrite(conn, tostring(name) .. ": " .. tostring(value) .. CRLF, resp.writeTimeout)
-        headers[name] = nil
-    end
-    bufferAndWrite(conn, CRLF, resp.writeTimeout)
+    writeHeaders(conn, resp)
     assert(conn:write(resp.writeTimeout)) -- flush stream before actual chunked encoding starts
 
     local bodyChunks = rawget(resp, "bodyChunks")
@@ -443,11 +460,8 @@ local function writeFullBody(resp)
     local conn = resp.luaw_conn
     bufferAndWrite(conn, resp:firstLine(), resp.writeTimeout)
 
-    for name,value in pairs(resp.headers) do
-        bufferAndWrite(conn, tostring(name) .. ": " .. tostring(value) .. CRLF, resp.writeTimeout)
-    end
-    bufferAndWrite(conn, CRLF, resp.writeTimeout)
-
+    writeHeaders(conn, resp)
+    
     if ((body)and(#body > 0)) then
         bufferAndWrite(conn, body, resp.writeTimeout)
     end
@@ -508,6 +522,7 @@ end
 
 luaw_lib.newServerHttpRequest = function(conn)
 	local req = {
+	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
         headers = luaw_lib.createDict(0, 16),
 	    luaw_parser = luaw_lib:newHttpRequestParser(),
@@ -527,6 +542,7 @@ end
 
 luaw_lib.newServerHttpResponse = function(conn)
     local resp = {
+        luaw_mesg_type = 'sresp',
         luaw_conn = conn,
         major_version = 1,
         minor_version = 1,
@@ -545,6 +561,7 @@ end
 
 local function newClientHttpResponse(conn)
 	local resp = {
+	    luaw_mesg_type = 'cresp',
 	    luaw_conn = conn,
         headers = luaw_lib.createDict(0, 16),
 	    luaw_parser = luaw_lib:newHttpResponseParser(),
@@ -613,6 +630,7 @@ end
 
 luaw_lib.newClientHttpRequest = function()
     local req = {
+        luaw_mesg_type = 'creq',
         port = 80,
         major_version = 1,
         minor_version = 1,
