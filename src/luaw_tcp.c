@@ -78,6 +78,7 @@ static luaw_timer_t* get_timer(lua_State *l_thread, int timer_idx) {
 }
 
 static int resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler) {
+    int tid = lua_tointeger(L, 2); //for debug info, in case of a core dump.
     int rc = lua_pcall(L, nargs, nresults, errHandler);
     if (rc != 0) {
         fprintf(stderr, "******** Error resuming Lua thread: %s (%d) *********\n", lua_tostring(L, -1), rc);
@@ -840,7 +841,7 @@ static void start_connection_thread(connection_t* conn) {
     luaw_connection_ref_t* ref = new_connection_ref(l_global);
     ref->conn = conn;
    
-    int errcode = resume_lua_thread(l_global, 2, 2, 0);
+    int errcode = lua_pcall(l_global, 2, 2, 0);
     if (errcode) {
         close_connection(conn);
     }
