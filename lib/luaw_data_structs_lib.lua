@@ -30,7 +30,7 @@ local function unref(reg, ref)
 end
 
 function module.newRegistry(size)
-    local reg = luaw_lib.createDict(size, 3)
+    local reg = {}
     reg.ref = ref;
     reg.unref = unref;
     reg.size = 0
@@ -108,7 +108,7 @@ end
 
 
 function module.newRingBuffer(size) 
-    local rb = luaw_lib.createDict(size, 6)
+    local rb = {}
     rb.reader = 1
     rb.writer = 1
     rb.filled = 0
@@ -119,7 +119,7 @@ function module.newRingBuffer(size)
 end
 
 function module.newOverwrittingRingBuffer(size) 
-    local rb = luaw_lib.createDict(size, 6)
+    local rb = {}
     rb.reader = 1
     rb.writer = 1
     rb.filled = 0
@@ -130,7 +130,7 @@ function module.newOverwrittingRingBuffer(size)
 end
 
 function module.newBlockingRingBuffer(size) 
-    local rb = luaw_lib.createDict(size, 6)
+    local rb = {}
     rb.reader = 1
     rb.writer = 1
     rb.filled = 0

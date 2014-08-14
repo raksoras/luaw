@@ -174,7 +174,7 @@ end
 parserMT.onBody = function(req, chunk)
     local bodyChunks = rawget(req, 'bodyChunks')
     if not bodyChunks then
-        bodyChunks = luaw_lib.createDict(4, 0)
+        bodyChunks = {}
         req.bodyChunks = bodyChunks
     end 
     table.insert(bodyChunks, chunk)
@@ -225,7 +225,7 @@ local function parseParams(req)
         if params then return params end
     
         if not params then
-            params = luaw_lib.createDict(0, 16)
+            params = {}
         end
 
         -- POST form params
@@ -318,7 +318,7 @@ end
 
 local function urlEncodeParams(params)
     if params then
-        local encodedParams = luaw_lib.createDict(16, 0)
+        local encodedParams = {}
         for key, val in pairs(params) do
             table.insert(encodedParams, urlEncode(key))
             table.insert(encodedParams, "=")
@@ -430,7 +430,7 @@ local function appendBody(resp, bodyPart)
         -- buffer complete body in memory in order to calculate Content-Length
         local bodyChunks = rawget(resp, "bodyChunks")
         if not bodyChunks then
-            bodyChunks = luaw_lib.createDict(4, 0)
+            bodyChunks = {}
             resp.bodyChunks = bodyChunks
         end
         table.insert(bodyChunks, bodyPart)
@@ -524,7 +524,7 @@ luaw_lib.newServerHttpRequest = function(conn)
 	local req = {
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
-        headers = luaw_lib.createDict(0, 16),
+	    headers = {},
 	    luaw_parser = luaw_lib:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -546,7 +546,7 @@ luaw_lib.newServerHttpResponse = function(conn)
         luaw_conn = conn,
         major_version = 1,
         minor_version = 1,
-        headers = luaw_lib.createDict(0, 16),
+        headers = {},
         addHeader = addHeader,
         shouldCloseConnection = shouldCloseConnection,
         setStatus = setStatus,
@@ -562,8 +562,8 @@ end
 local function newClientHttpResponse(conn)
 	local resp = {
 	    luaw_mesg_type = 'cresp',
-	    luaw_conn = conn,
-        headers = luaw_lib.createDict(0, 16),
+	    luaw_conn = conn, 
+	    headers = {},
 	    luaw_parser = luaw_lib:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -635,7 +635,7 @@ luaw_lib.newClientHttpRequest = function()
         major_version = 1,
         minor_version = 1,
         method = 'GET',
-        headers = luaw_lib.createDict(0, 16),
+        headers = {},
         addHeader = addHeader,
         connect = connectReq,
         execute = execute,
