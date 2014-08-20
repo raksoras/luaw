@@ -147,7 +147,7 @@ int luaw_fn_place_holder(lua_State *L) {
 	* functions implemented in Lua in luaw_http_lib.lua library wrapper
 	*/
 	return raise_lua_error(L,
-	"500 place holder lib function invoked. Supposed to be replaced by real lua function. Check luaw_http_lib.lua for missing definitions");
+	"500 place holder lib function invoked. Supposed to be replaced by real lua function. Check luaw_lib.lua for missing definitions");
 }
 
 void make_metatable(lua_State *L, const char* mt_name, const luaL_Reg* mt_funcs) {

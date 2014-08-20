@@ -1,6 +1,6 @@
 local lfs = require('lfs')
 
-local luaw_open_lib, err = package.loadlib('/apps/luaw/lib_luaw.so', 'luaw_open_lib')
+local luaw_open_lib, err = package.loadlib('/Users/saroskar/GitHub/luaw/lib_luaw.so', 'luaw_open_lib')
 if not luaw_open_lib then
 	error(err)
 end
@@ -147,40 +147,56 @@ local function handleKeepAlive(req, keepAlive)
     end
 end
 
-parserMT.onHeaderName = function(req, hName)
+local function onMesgBegin(req, cbtype, remaining)
+    assert(cbtype == 1, remaining)
+    req:reset()
+end 
+
+local function onStatus(req, cbtype, remaining ,status)
+    assert(cbtype == 2, remaining)
+	accumulateChunkedValue(req, 'statusMesg', status)
+end
+
+local function onURL(req, cbtype, remaining, url)
+    assert(cbtype == 3, remaining)
+	accumulateChunkedValue(req, 'url', url)
+end
+
+local function onHeaderName(req, cbtype, remaining, hName)
+    assert(cbtype == 4, remaining)
 	handleAccHttpHeader(req)
     accumulateChunkedValue(req, '_acc_header_name_', hName)
 end
 
-parserMT.onHeaderValue = function(req, hValue)
+local function onHeaderValue(req, cbtype, remaining, hValue)
+    assert(cbtype == 5, remaining)
 	if not hValue then hValue = '' end -- empty header value
 	accumulateChunkedValue(req, '_acc_header_value_', hValue)
 end
 
-parserMT.onHeadersComplete = function(req, keepAlive)
+local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
+    assert(cbtype == 6, remaining)
 	handleAccHttpHeader(req)
 	handleKeepAlive(req, keepAlive)
 	req.luaw_headers_done = true
+	req.major_version = httpMajor
+	req.minor_version = httpMinor
+    req.method = method
+    req.status = status
 end
 
-parserMT.onURL = function(req, url)
-	accumulateChunkedValue(req, 'url', url)
-end
-
-parserMT.onStatus =  function(req, status)
-	accumulateChunkedValue(req, 'statusMesg', status)
-end
-
-parserMT.onBody = function(req, chunk)
+local function onBody(req, cbtype, remaining, chunk)
+    assert(cbtype == 7, remaining)
     local bodyChunks = rawget(req, 'bodyChunks')
     if not bodyChunks then
-        bodyChunks = luaw_lib.createDict(4, 0)
+        bodyChunks = {}
         req.bodyChunks = bodyChunks
     end 
     table.insert(bodyChunks, chunk)
 end
 
-parserMT.onMesgComplete = function(req, keepAlive)
+local function onMesgComplete(req, cbtype, remaining, keepAlive)
+    assert(cbtype == 8, remaining)
 	-- for the rare boundary case of chunked transfer encoding, where headers may continue
 	-- after the last body chunk 
 	handleAccHttpHeader(req)
@@ -189,6 +205,17 @@ parserMT.onMesgComplete = function(req, keepAlive)
 	req.luaw_headers_done = true
 end
 
+-- Order is important and must match C enum http_parser_cb_type
+local http_callbacks_lua = {
+    onMesgBegin,
+    onStatus,
+    onURL,
+    onHeaderName,
+    onHeaderValue,
+    onHeadersComplete,
+    onBody,
+    onMesgComplete
+}
 
 local function shouldCloseConnection(req)
     if req and req.headers then
@@ -199,14 +226,32 @@ local function shouldCloseConnection(req)
     end
 end
 
+local function parseHttpBuffer(req, conn)
+    local parser = req.luaw_parser
+    while true do
+        -- matched against most number of return results possible. Actual variable names
+        -- are meaningless without the context of correct callback, misleading even!
+        local cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status = parser:parseHttpBuffer(conn)
+        local callback = http_callbacks_lua[cbtype]
+        if not callback then
+            error("Invalid HTTP parser callback# "..cbtype.." requested")
+        end
+        callback(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
+        if (remaining == 0) then break end
+    end
+end
+
+
 local function readAndParse(req)
-    local status, mesg = assert(req.luaw_conn:read(req.readTimeout))
-    assert(req.luaw_parser:parseHttpBuffer(req, req.luaw_conn))
+    local conn = req.luaw_conn
+    local status, mesg = assert(conn:read(req.readTimeout))
 
     if mesg == 'EOF' then 
         req.luaw_headers_done = true
         req.luaw_mesg_done = true 
         req:addHeader('Connection', 'close')
+    else 
+        parseHttpBuffer(req, conn)
     end
     return req.luaw_headers_done, req.luaw_mesg_done
 end
@@ -225,7 +270,7 @@ local function parseParams(req)
         if params then return params end
     
         if not params then
-            params = luaw_lib.createDict(0, 16)
+            params = {}
         end
 
         -- POST form params
@@ -318,7 +363,7 @@ end
 
 local function urlEncodeParams(params)
     if params then
-        local encodedParams = luaw_lib.createDict(16, 0)
+        local encodedParams = {}
         for key, val in pairs(params) do
             table.insert(encodedParams, urlEncode(key))
             table.insert(encodedParams, "=")
@@ -430,7 +475,7 @@ local function appendBody(resp, bodyPart)
         -- buffer complete body in memory in order to calculate Content-Length
         local bodyChunks = rawget(resp, "bodyChunks")
         if not bodyChunks then
-            bodyChunks = luaw_lib.createDict(4, 0)
+            bodyChunks = {}
             resp.bodyChunks = bodyChunks
         end
         table.insert(bodyChunks, bodyPart)
@@ -520,11 +565,26 @@ connMT.write = function(self, writeTimeout)
     return status, nwritten
 end
 
+local function reset(req)
+    req.headers = {}
+    req["_acc_header_name_"] = nil
+    req["_acc_header_value_"] = nil
+    req.url = nil
+    req.bodyChunks = nil
+    req.body = nil
+    req.luaw_mesg_done = nil
+    req.luaw_headers_done = nil
+    req.params = nil
+    req.parsedURL = nil
+    req.statusCode = nil
+    req.statusMesg = nil
+end
+
 luaw_lib.newServerHttpRequest = function(conn)
 	local req = {
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
-        headers = luaw_lib.createDict(0, 16),
+	    headers = {},
 	    luaw_parser = luaw_lib:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -534,6 +594,7 @@ luaw_lib.newServerHttpRequest = function(conn)
 	    getParsedURL = getParsedURL,
 	    readFull = readFull,
 	    readStreaming = readStreaming,
+	    reset = reset,
 	    close = close
 	}
     assert(conn:startReading())
@@ -546,7 +607,7 @@ luaw_lib.newServerHttpResponse = function(conn)
         luaw_conn = conn,
         major_version = 1,
         minor_version = 1,
-        headers = luaw_lib.createDict(0, 16),
+        headers = {},
         addHeader = addHeader,
         shouldCloseConnection = shouldCloseConnection,
         setStatus = setStatus,
@@ -554,6 +615,7 @@ luaw_lib.newServerHttpResponse = function(conn)
         startStreaming = startStreaming,
         appendBody = appendBody,
         flush = flush,
+	    reset = reset,        
         close = close 
     }
 	return resp;
@@ -562,8 +624,8 @@ end
 local function newClientHttpResponse(conn)
 	local resp = {
 	    luaw_mesg_type = 'cresp',
-	    luaw_conn = conn,
-        headers = luaw_lib.createDict(0, 16),
+	    luaw_conn = conn, 
+	    headers = {},
 	    luaw_parser = luaw_lib:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -635,7 +697,7 @@ luaw_lib.newClientHttpRequest = function()
         major_version = 1,
         minor_version = 1,
         method = 'GET',
-        headers = luaw_lib.createDict(0, 16),
+        headers = {},
         addHeader = addHeader,
         connect = connectReq,
         execute = execute,

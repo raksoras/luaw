@@ -91,9 +91,6 @@ typedef struct luaw_timer_ref {
 
 #define ASSERT_INIT_DONES(L, var) if (var == 0) return luaL_error(L, #var " not initialized")
 
-#define PARSE_START(conn)  (void *)(conn->read_buffer.base + conn->parse_len)
-#define PARSE_LEN(conn)  (conn->read_buffer.len - conn->parse_len)
-
 #define REMAINING_WRITE_BUFF_CAPACITY(connection, trailer_len) ((connection->buff_size) - (connection->write_buffer.len) - (trailer_len))
 #define WRITE_BUFF_APPEND_DEST(connection) ((connection->write_buffer.base)+(connection->write_buffer.len))
 

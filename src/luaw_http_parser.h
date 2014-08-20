@@ -14,6 +14,17 @@ typedef enum {
 } 
 decoder_state;
 
+typedef enum {
+    http_cb_on_message_begin = 1,
+    http_cb_on_status,
+    http_cb_on_url,
+    http_cb_on_header_field,
+    http_cb_on_header_value,
+    http_cb_on_headers_complete,
+    http_cb_on_body,
+    http_cb_on_mesg_complete
+} http_parser_cb_type;
+
 /* imported from http_parser.h */
 static const char *http_methods[] =
   {
@@ -21,6 +32,17 @@ static const char *http_methods[] =
   HTTP_METHOD_MAP(XX)
 #undef XX
   };
+
+#define PARSE_START(conn)  (void *)(conn->read_buffer.base + conn->parse_len)
+#define PARSE_LEN(conn)  (conn->read_buffer.len - conn->parse_len)
+
+typedef struct {
+    http_parser parser;
+    http_parser_cb_type http_cb;
+    char* start;
+    size_t len;
+}
+luaw_http_parser_t;
 
 /* HTTP lib methods to be exported */
 

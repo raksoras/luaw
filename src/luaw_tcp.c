@@ -77,6 +77,15 @@ static luaw_timer_t* get_timer(lua_State *l_thread, int timer_idx) {
     return ref->timer;
 }
 
+static int resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler) {
+    int tid = lua_tointeger(L, 2); //for debug info, in case of a core dump.
+    int rc = lua_pcall(L, nargs, nresults, errHandler);
+    if (rc != 0) {
+        fprintf(stderr, "******** Error resuming Lua thread: %s (%d) *********\n", lua_tostring(L, -1), rc);
+    }
+    return rc;
+}
+
 /* lua call spec: status, timer_elapsed = timer:wait(tid)
 Success, timer elapsed:  status = true, timer_elapsed = true
 Success, timer not elapsed:  status = true, timer_elapsed = false
@@ -99,7 +108,7 @@ LIBUV_CALLBACK static void on_user_timer_timeout(uv_timer_t* handle) {
             lua_pushboolean(l_global, 1);
             lua_pushboolean(l_global, 1);
 //        }
-        lua_pcall(l_global, 3, 1, 0);
+        resume_lua_thread(l_global, 3, 2, 0);
     } else {
         timer->state = ELAPSED;
     }
@@ -185,7 +194,7 @@ LIBUV_CALLBACK static void on_user_timer_close(uv_handle_t* handle) {
                 lua_pushinteger(l_global, timer->lua_tid);
                 lua_pushboolean(l_global, 0);
                 lua_pushstring(l_global, uv_strerror(UV_ECANCELED));
-                lua_pcall(l_global, 3, 1, 0);
+                resume_lua_thread(l_global, 3, 2, 0);
             }
             free(timer);
         } else { 
@@ -424,7 +433,7 @@ static void send_read_data_to_lua(connection_t* conn, bool clear_buffer) {
         
         /* Lua call spec: status/nread, error message/buff = conn:read() */
         setup_read_return_values(l_global, conn);
-        lua_pcall(l_global, 3, 1, 0);
+        resume_lua_thread(l_global, 3, 2, 0);
     }
     if (clear_buffer) {
         clear_read_buffer(conn);
@@ -525,7 +534,7 @@ static void send_write_results_to_lua(connection_t* conn) {
         }
 
         clear_write_buffer(conn);
-        lua_pcall(l_global, 3, 1, 0);
+        resume_lua_thread(l_global, 3, 2, 0);
     }
 }
 
@@ -690,7 +699,7 @@ LIBUV_CALLBACK static void on_client_connect(uv_connect_t* connect_req, int stat
     }
 
     clear_write_buffer(conn);
-    lua_pcall(l_global, 3, 1, 0);
+    resume_lua_thread(l_global, 3, 2, 0);
 }
 
 /* lua call spec: luaw_lib.connect(ip4_addr, port, tid, connectTimeout)
@@ -775,7 +784,7 @@ LIBUV_CALLBACK static void on_resolved(uv_getaddrinfo_t *resolver, int status, s
         lua_pushboolean(l_global, 1);       //status to be returned
         lua_pushstring(l_global, ip_str);   //IP address string
     }
-    lua_pcall(l_global, 3, 1, 0);
+    resume_lua_thread(l_global, 3, 2, 0);
 }
 
 LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {

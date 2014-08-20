@@ -11,99 +11,12 @@
 
 typedef enum {
 	PARSE_HTTP_PARSER_IDX = 1,
-	PARSE_HTTP_REQ_IDX,
 	PARSE_HTTP_BUFF_IDX,
+	PARSE_HTTP_REQ_IDX,
 	PARSE_HTTP_LENGTH_IDX,
 	PARSE_HTTP_CONN_IDX
 } 
 parse_http_lua_stack_index;
-
-static int lua_http_callback(const char* cb_name, const http_parser *parser, const char* start, const size_t len) {
-	lua_State *L = (lua_State *)parser->data;
-
-	luaL_checkudata(L, PARSE_HTTP_PARSER_IDX, LUA_HTTP_PARSER_META_TABLE);
-	lua_getfield(L, PARSE_HTTP_PARSER_IDX, cb_name);
-	if (lua_isfunction(L, -1) != 1) {
-		return raise_lua_error(L, "500 Missing lua http callback %s", cb_name);
-	}
-	
-	/* Lua HTTP callback signature: lua_callback_fn(req, [parsed HTTP field string]) */
-	lua_pushvalue(L, PARSE_HTTP_REQ_IDX);
-	if (start != NULL) {
-		lua_pushlstring(L, start, len);
-	}
-	else {
-		if ((strcmp(cb_name, "onHeadersComplete")&&(strcmp(cb_name, "onMesgComplete")))) {
-		    return raise_lua_error(L, "500 Empty parsed http field passed to callback %s", cb_name);
-		}
-		lua_pushboolean(L, http_should_keep_alive(parser));
-	}	
-
-    lua_call(L, 2, 0);
-	return 0;
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_message_begin(http_parser *parser) {
-	return 0;
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_url(http_parser *parser, const char* start, size_t len) {
-	return lua_http_callback("onURL", parser, start, len);
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_status(http_parser *parser, const char* start, size_t len) {
-	return lua_http_callback("onStatus", parser, start, len);
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_header_name(http_parser *parser, const char* start, size_t len) {
-	return lua_http_callback("onHeaderName", parser, start, len);
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_header_value(http_parser *parser, const char* start, size_t len) {
-	return lua_http_callback("onHeaderValue", parser, start, len);
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_headers_complete(http_parser *parser) {
-	lua_State *L = (lua_State *)parser->data;
-
-	if (!lua_istable(L, PARSE_HTTP_REQ_IDX)) {
-		return raise_lua_error(L, "500 Missing lua http request table");
-	}
-	
-	lua_pushinteger(L, parser->http_major);
-	lua_setfield(L, PARSE_HTTP_REQ_IDX, "major_version");
-
-	lua_pushinteger(L, parser->http_minor);
-	lua_setfield(L, PARSE_HTTP_REQ_IDX, "minor_version");
-
-	if (parser->type == HTTP_REQUEST) {
-		lua_pushstring(L, http_methods[parser->method]);
-		lua_setfield(L, PARSE_HTTP_REQ_IDX, "method");
-	}
-
-	if (parser->type == HTTP_RESPONSE) {
-		lua_pushinteger(L, parser->status_code);
-		lua_setfield(L, PARSE_HTTP_REQ_IDX, "status");
-	}
-
-	if (parser->http_errno != 0) {
-		lua_pushinteger(L, parser->http_errno);
-		lua_setfield(L, PARSE_HTTP_REQ_IDX, "errno");
-	}
-	
-	lua_http_callback("onHeadersComplete", parser, NULL, 0);
-	return 0;
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_body(http_parser *parser, const char* start, size_t len) {
-	return lua_http_callback("onBody", parser, start, len);
-}
-
-HTTP_PARSER_CALLBACK static int http_parser_on_message_complete(http_parser *parser) {
-    /* pause http parser to correctly handle HTTP 1.1 pipelining */
-    http_parser_pause(parser, 1);
-    return lua_http_callback("onMesgComplete", parser, NULL, 0);
-}
 
 static int decode_hex_str(const char* str, int len) {
 	char *read_ptr = (char *)str;
@@ -240,22 +153,64 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
     return handle_name_value_pair(L, name, name_len, hex_name, value, value_len, hex_value) ? 1 : 2;
 }
 
-static int new_http_parser(lua_State *L, enum http_parser_type parser_type) {
-	http_parser* parser = lua_newuserdata(L, sizeof(http_parser));
-	if (parser == NULL) {
+static int new_lhttp_parser(lua_State *L, enum http_parser_type parser_type) {
+	luaw_http_parser_t* lhttp_parser = lua_newuserdata(L, sizeof(luaw_http_parser_t));
+	if (lhttp_parser == NULL) {
 		return raise_lua_error(L, "500 Failed to allocate memory for new http_parser.");
 	}	
 	luaL_setmetatable(L, LUA_HTTP_PARSER_META_TABLE);
-	http_parser_init(parser, parser_type);
+	http_parser_init(&lhttp_parser->parser, parser_type);
+	lhttp_parser->parser.data = lhttp_parser;
 	return 1;
 }
 
 LUA_LIB_METHOD int luaw_new_http_request_parser(lua_State* L) {
-    return new_http_parser(L, HTTP_REQUEST);
+    return new_lhttp_parser(L, HTTP_REQUEST);
 }
 
 LUA_LIB_METHOD int luaw_new_http_response_parser(lua_State* L) {
-    return new_http_parser(L, HTTP_RESPONSE);
+    return new_lhttp_parser(L, HTTP_RESPONSE);
+}
+
+static int handle_http_callback(http_parser *parser, http_parser_cb_type cb, const char* start, size_t len) {
+    luaw_http_parser_t* lhttp_parser = (luaw_http_parser_t*) parser->data;
+    lhttp_parser->http_cb = cb;
+    lhttp_parser->start = (char*)start;
+    lhttp_parser->len = len;
+    http_parser_pause(parser, 1);    
+    return 0;
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_message_begin(http_parser *parser) {
+	return handle_http_callback(parser, http_cb_on_message_begin, NULL, 0);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_url(http_parser *parser, const char* start, size_t len) {
+	return handle_http_callback(parser, http_cb_on_url, start, len);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_status(http_parser *parser, const char* start, size_t len) {
+	return handle_http_callback(parser, http_cb_on_status, start, len);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_header_name(http_parser *parser, const char* start, size_t len) {
+	return handle_http_callback(parser, http_cb_on_header_field, start, len);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_header_value(http_parser *parser, const char* start, size_t len) {
+	return handle_http_callback(parser, http_cb_on_header_value, start, len);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_headers_complete(http_parser *parser) {
+    return handle_http_callback(parser, http_cb_on_headers_complete, NULL, 0);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_body(http_parser *parser, const char* start, size_t len) {
+	return handle_http_callback(parser, http_cb_on_body, start, len);
+}
+
+HTTP_PARSER_CALLBACK static int http_parser_on_message_complete(http_parser *parser) {
+    return handle_http_callback(parser, http_cb_on_mesg_complete, NULL, 0);
 }
 
 static const http_parser_settings parser_settings = {
@@ -269,66 +224,80 @@ static const http_parser_settings parser_settings = {
 	.on_message_complete = http_parser_on_message_complete
 };
 
+/* Lua call spec:
+* All failures: 
+*       false, error message = parseHttpBuffer(conn)
+*
+* Successes: 
+*
+*   http_parser_on_headers_complete:
+*       http_cb_type, buffer remaining, http_should_keep_alive, major_version, minor_version, http method, http status code = parseHttpBuffer(conn) 
+*
+*   http_parser_on_message_complete:
+*       http_cb_type, buffer remaining, http_should_keep_alive = parseHttpBuffer(conn)
+*
+*   All other callbacks:
+*       http_cb_type, buffer remaining, parsed value = parseHttpBuffer(conn)
+*
+*/
 static int parse_http_buffer(lua_State *L) {
-    lua_settop(L, 3);
-	http_parser* parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
-	parser->data = L;
-
-	const luaw_connection_ref_t* conn_ref = luaL_checkudata(L, 3, LUA_CONNECTION_META_TABLE);
+    lua_settop(L, 2);
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+	const luaw_connection_ref_t* conn_ref = luaL_checkudata(L, 2, LUA_CONNECTION_META_TABLE);
 	connection_t* conn = conn_ref->conn;
+	
 	char* buff = PARSE_START(conn);
 	const size_t len = PARSE_LEN(conn);
-
 	const int nparsed = http_parser_execute(parser, &parser_settings, buff, len);
 	const int remaining = len - nparsed;
-	
-	if (remaining == 0) {
-	    /* normal case, buffer fully parsed */
-	    clear_read_buffer(conn);
-        lua_pushboolean(L, 1);
-        return 1;
-	} 
-    
-    if ((remaining > 0)&&(parser->http_errno == HPE_PAUSED)) {
-        /* pipelined HTTP request, "forward" buffer to the end of last parsed request */
-        conn->parse_len += nparsed;
-        http_parser_pause(parser, 0); 
-        lua_pushboolean(L, 1);
-        return 1;
-    } 
-    
-    /* error while parsing */
-    lua_pushboolean(L, 0);
-    lua_pushfstring(L, "400 Error parsing HTTP fragment: %s\n total=%d, parsed=%d\n", buff, len, nparsed);
-    return 2;
-}
 
-LUA_OBJ_METHOD static int parse_http_string(lua_State *L) {
-	size_t len = 0;
-	const char* str = luaL_checklstring(L, PARSE_HTTP_BUFF_IDX, &len);
-    
-    lua_settop(L, 3);
-	http_parser* parser = luaL_checkudata(L, PARSE_HTTP_PARSER_IDX, LUA_HTTP_PARSER_META_TABLE);
-	parser->data = L;
-	const int nparsed = http_parser_execute(parser, &parser_settings, str, len);
-	
-    if (nparsed != len) {
-        if (parser->http_errno != HPE_OK) {
-            /* error while parsing */
-            lua_pushboolean(L, 0);
-            lua_pushfstring(L, "400 Error parsing HTTP fragment: %s\n total=%d, parsed=%d\n", str, len, nparsed);
-            return 2;
-        }
-        /* pipelined HTTP request */
+    if ((remaining > 0)&&(parser->http_errno != HPE_PAUSED)) {
+        lua_pushboolean(L, 0);
+        lua_pushfstring(L, "400 Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%.60s\n", parser->http_errno, len, nparsed, buff);
+        return 2;
+    } 
+
+    lua_pushinteger(L, lhttp_parser->http_cb);
+    lua_pushinteger(L, remaining);
+    int nresults = 3;    
+    switch(lhttp_parser->http_cb) {
+
+        case http_cb_on_headers_complete:
+            lua_pushboolean(L, http_should_keep_alive(parser));
+	        lua_pushinteger(L, parser->http_major);
+        	lua_pushinteger(L, parser->http_minor);
+            if (parser->type == HTTP_REQUEST) {
+                lua_pushstring(L, http_methods[parser->method]);
+            } else {
+                lua_pushnil(L);
+            }
+            if (parser->type == HTTP_RESPONSE) {
+                lua_pushinteger(L, parser->status_code);
+            } else {
+                lua_pushnil(L);
+            }
+            nresults = 7;
+            break;
+
+        case http_cb_on_mesg_complete:
+            lua_pushboolean(L, http_should_keep_alive(parser));
+            break;
+
+        default:
+            lua_pushlstring(L, lhttp_parser->start, lhttp_parser->len);
     }
     
-    if (parser->http_errno == HPE_PAUSED) {
-        http_parser_pause(parser, 0); 
+	if (remaining == 0) {
+	    /* buffer fully parsed */
+	    clear_read_buffer(conn);
+	} else {
+        /* "forward" buffer to the end of last parsed request and un-pause the parser */
+        conn->parse_len += nparsed;
     } 
-
-    lua_pushboolean(L, 1);
-    lua_pushnil(L);
-    return 2;
+    http_parser_pause(parser, 0); 
+        
+    return nresults;
 }
 
 
@@ -386,14 +355,7 @@ LUA_LIB_METHOD int luaw_to_http_error(lua_State *L) {
 
 static const struct luaL_Reg http_parser_methods[] = {
 	{"parseHttpBuffer", parse_http_buffer},
-	{"parseHttpString", parse_http_string},
-	{"onHeaderName", luaw_fn_place_holder},
-	{"onHeaderValue", luaw_fn_place_holder},
-	{"onHeadersComplete", luaw_fn_place_holder},
-	{"onURL", luaw_fn_place_holder},
-	{"onStatus", luaw_fn_place_holder},
-	{"onBody", luaw_fn_place_holder},
-	{"onMesgComplete", luaw_fn_place_holder},
+	{"parseHttpString", luaw_fn_place_holder},
 	{NULL, NULL}  /* sentinel */
 };
 
