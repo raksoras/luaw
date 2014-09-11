@@ -30,11 +30,11 @@ local function userThreadRunner(userThreadFn, ...)
     -- processing later and original calling thread can resume.
     coroutine.yield(TS_RUNNABLE)
     -- At this point we have been resumed by thread scheduler during the "bottom half" run
-    -- queue processing bu the scheduler so run the actual user thread function. 
+    -- queue processing bu the scheduler so run the actual user thread function.
     return userThreadFn(...)
 end
 
-local function init(config) 
+local function init(config)
     assert(type(config) == 'table', "Invalid configuration specified")
     assert(type(config.server_ip) == 'string', "Invalid host address supplied. Either use host IP or 0.0.0.0")
     assert(type(config.server_port) == 'number', "Invalid server port specified")
@@ -47,14 +47,14 @@ local function init(config)
     assert(type(config.write_timeout) == 'number', "Invalid write timeout specified")
     assert(type(config.thread_reuse_limit) == 'number', "Invalid thread reuse limit specified")
     assert(type(config.thread_pool_size) == 'number', "Invalid server thread pool size specified")
-       
+
     DEFAULT_CONNECT_TIMEOUT = config.connect_timeout
     DEFAULT_READ_TIMEOUT = config.read_timeout
     DEFAULT_WRITE_TIMEOUT = config.write_timeout
-    
-    
-    -- scheduler state   
-         
+
+
+    -- scheduler state
+
     local threadRegistry = ds_lib.newRegistry(config.thread_pool_size)
     local threadPool = ds_lib.newRingBuffer(config.thread_pool_size)
     local runQueueLen = 0
@@ -63,8 +63,8 @@ local function init(config)
     local currentRunningThreadCtx
     local currentTime
 
-    -- scheduler methods    
-    
+    -- scheduler methods
+
     local function addToRunQueue(threadCtx)
         if not runQueueTail then
             runQueueHead = threadCtx
@@ -86,7 +86,7 @@ local function init(config)
         local threadCtx = { thread = t, requestCtx = {} }
         -- anchor thread in registry to prevent GC
         local ref = threadRegistry:ref(threadCtx)
-        threadCtx.tid = ref    
+        threadCtx.tid = ref
         return threadCtx
     end
 
@@ -115,21 +115,22 @@ local function init(config)
         currentRunningThreadCtx = threadCtx
         local t = threadCtx.thread
         local tid = threadCtx.tid
-        
+
         context = threadCtx.requestCtx  -- TLS, per thread context
         local status, state, retVal = coroutine.resume(t, ...)
         context = nil -- reset TLS context
-    
+
         if not status then
             -- thread ran into error
+            print("Error: "..tostring(state))
             state = END_OF_THREAD
             -- thread has blown its stack so let it get garbage collected
             t = nil
         end
 
         if ((state == END_OF_THREAD)or(state == END_OF_CALL)) then
-            threadRegistry:unref(tid) 
-            threadCtx.thread = nil       
+            threadRegistry:unref(tid)
+            threadCtx.thread = nil
             threadCtx.requestCtx = nil
             if ((state == END_OF_CALL) and (t)) then
                 -- thread is still alive, return it to free pool if possible
@@ -138,12 +139,12 @@ local function init(config)
             unblockJoinedThreadIfAny(threadCtx, status, retVal)
             return afterResume(threadCtx, TS_DONE, retVal)
         end
-     
+
         if ((state == TS_BLOCKED_EVENT)or(state == TS_BLOCKED_THREAD)) then
             -- thread will later be resumed by libuv call back
             return afterResume(threadCtx, state, retVal)
         end
-    
+
         -- Thread yielded, but is still runnable. Add it back to the run queue
         addToRunQueue(threadCtx)
         return afterResume(threadCtx, TS_RUNNABLE, retVal)
@@ -154,14 +155,14 @@ local function init(config)
         if not threadCtx then error("Invalid thread Id "..tostring(tid)) end
         return resumeThread(threadCtx, ...)
     end
-    
+
     local function startSystemThread(serviceFn, conn, ...)
         local threadCtx = newThread()
         threadCtx.state = TS_RUNNABLE
         local isDone = resumeThread(threadCtx, serviceFn, conn, ...)
         return isDone, threadCtx.tid
     end
-    
+
     tid = function ()
         if currentRunningThreadCtx then
             return currentRunningThreadCtx.tid
@@ -170,16 +171,16 @@ local function init(config)
     end
 
     -- server object
-    
+
     local server = luaw_lib.newServer(startSystemThread, resumeThreadId, config)
     local serverObj = {}
-    
+
 
     -- server obj methods
 
     serverObj.runQueueNotEmpty = function()
         if runQueueHead then return true end
-        return false 
+        return false
     end
 
     serverObj.runQueueSize = function()
@@ -194,23 +195,23 @@ local function init(config)
             threadCtx.nextThread = nil
             runQueueLen = runQueueLen -1
             if (runQueueLen < 0) then runQueueLen = 0 end
-        
+
             if (threadCtx.state == TS_DONE) then
                 -- This can happen when thread is added to the run queue but is woken up by libuv
-                -- event and then runs to completion before the run queue scheduler gets chance 
+                -- event and then runs to completion before the run queue scheduler gets chance
                 -- to resume it
-                return 
+                return
             end
             return resumeThread(threadCtx)
         end
     end
-    
+
     serverObj.join = function(...)
         local joinedThreads = table.pack(...)
         local numOfThreads = #joinedThreads
         local joiningTC = currentRunningThreadCtx
         local count = 0
-    
+
         for i=1, numOfThreads do
             local joinedTC = joinedThreads[i]
             if ((joinedTC)and(joinedTC.state)and(joinedTC.state ~= TS_DONE)) then
@@ -247,11 +248,11 @@ local function init(config)
         logging.updateCurrentTime(currentTime)
         return pcall(server.blockingPoll, server)
     end
-    
+
     serverObj.stop = function()
         server:stop()
     end
-    
+
     serverObj.time = function()
         return currentTime
     end
@@ -263,12 +264,12 @@ local default_config = {
     server_ip = "0.0.0.0",
     server_port = 80,
     thread_pool_size = 1024,
-    thread_reuse_limit = 256, 
+    thread_reuse_limit = 256,
     connection_buffer_size = 1024,
     connect_timeout = 8000,
     read_timeout = 3000,
-    write_timeout = 3000,  
-      
+    write_timeout = 3000,
+
     log_file_basename = "luaw-log",
     log_file_size_limit = 1024 * 1024 * 10, --10MB
     log_file_count_limit = 99,
@@ -296,7 +297,7 @@ local function loadConfiguration(configFile)
     return config
 end
 
-return { 
+return {
     configuration = configuration,
     loadConfiguration = loadConfiguration,
     init = init

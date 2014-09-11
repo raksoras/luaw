@@ -15,7 +15,7 @@ typedef enum {
 	PARSE_HTTP_REQ_IDX,
 	PARSE_HTTP_LENGTH_IDX,
 	PARSE_HTTP_CONN_IDX
-} 
+}
 parse_http_lua_stack_index;
 
 static int decode_hex_str(const char* str, int len) {
@@ -25,7 +25,7 @@ static int decode_hex_str(const char* str, int len) {
 	char ch;
 
 	while (len) {
-		ch = *read_ptr;		
+		ch = *read_ptr;
 		if ((ch == '%')&&(len > 2)) {
 			sscanf((read_ptr+1),"%2x", &hex_ch);
 			ch = (char)hex_ch;
@@ -34,10 +34,10 @@ static int decode_hex_str(const char* str, int len) {
 		else {
 			read_ptr++;	len--;
 		}
-		
+
 		*write_ptr = ch;
 		write_ptr++;
-	}	
+	}
 	return ((const unsigned char*)write_ptr - (const unsigned char*)str);
 }
 
@@ -49,7 +49,7 @@ static int handle_name_value_pair(lua_State* L, const char* name, int name_len, 
 		if (hex_value) {
 			value_len = decode_hex_str(value, value_len);
 		}
-		
+
 		lua_getfield(L, 1, "storeHttpParam");
 		if (lua_isfunction(L, -1) != 1) {
 			raise_lua_error(L, "500 Missing lua function storeHttpParam()");
@@ -66,7 +66,7 @@ static int handle_name_value_pair(lua_State* L, const char* name, int name_len, 
 	return true; //param name without value is ok, e.g. &foo=
 }
 
-/* Lua call spec: 
+/* Lua call spec:
  success: params table, nil = http_lib:url_decode(url encoded string, params)
  success: status(false), error message = http_lib:url_decode(url encoded string, params)
 */
@@ -84,7 +84,7 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 
 	while (length--) {
 		char ch = *read_ptr;
-		
+
 		switch(ds) {
 			case starting_name:
                 if (!handle_name_value_pair(L, name, name_len, hex_name, value, value_len, hex_value)) return 2; //err_code, err_mesg
@@ -95,16 +95,16 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 
 				switch(ch) {
 					case '&':
-					case '=': 
+					case '=':
                 	    return error_to_lua(L, "400 Bad URL encoding: Error while expecting start of param name at: %s\n", read_ptr);
-					case '%': 
+					case '%':
 						hex_name = true;
 				}
 				ds = in_name;
 				name = read_ptr;
 				name_len = 1;
 				break;
-			
+
 			case in_name:
 				switch(ch) {
 					case '&':
@@ -118,7 +118,7 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 						name_len++;
 				}
 				break;
-			
+
 			case starting_value:
 				switch(ch) {
 					case '&':
@@ -131,7 +131,7 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 				value = read_ptr;
 				value_len = 1;
 				break;
-			
+
 			case in_value:
 				switch(ch) {
 					case '&':
@@ -145,7 +145,7 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 						value_len++;
 				}
 				break;
-			
+
 		}
 		if (ch == '+') *read_ptr =' ';
 		read_ptr++;
@@ -157,7 +157,7 @@ static int new_lhttp_parser(lua_State *L, enum http_parser_type parser_type) {
 	luaw_http_parser_t* lhttp_parser = lua_newuserdata(L, sizeof(luaw_http_parser_t));
 	if (lhttp_parser == NULL) {
 		return raise_lua_error(L, "500 Failed to allocate memory for new http_parser.");
-	}	
+	}
 	luaL_setmetatable(L, LUA_HTTP_PARSER_META_TABLE);
 	http_parser_init(&lhttp_parser->parser, parser_type);
 	lhttp_parser->parser.data = lhttp_parser;
@@ -172,12 +172,19 @@ LUA_LIB_METHOD int luaw_new_http_response_parser(lua_State* L) {
     return new_lhttp_parser(L, HTTP_RESPONSE);
 }
 
+LUA_LIB_METHOD int luaw_init_http_parser(lua_State* L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+	http_parser_init(parser, parser->type);
+    return 0;
+}
+
 static int handle_http_callback(http_parser *parser, http_parser_cb_type cb, const char* start, size_t len) {
     luaw_http_parser_t* lhttp_parser = (luaw_http_parser_t*) parser->data;
     lhttp_parser->http_cb = cb;
     lhttp_parser->start = (char*)start;
     lhttp_parser->len = len;
-    http_parser_pause(parser, 1);    
+    http_parser_pause(parser, 1);
     return 0;
 }
 
@@ -225,13 +232,13 @@ static const http_parser_settings parser_settings = {
 };
 
 /* Lua call spec:
-* All failures: 
+* All failures:
 *       false, error message = parseHttpBuffer(conn)
 *
-* Successes: 
+* Successes:
 *
 *   http_parser_on_headers_complete:
-*       http_cb_type, buffer remaining, http_should_keep_alive, major_version, minor_version, http method, http status code = parseHttpBuffer(conn) 
+*       http_cb_type, buffer remaining, http_should_keep_alive, major_version, minor_version, http method, http status code = parseHttpBuffer(conn)
 *
 *   http_parser_on_message_complete:
 *       http_cb_type, buffer remaining, http_should_keep_alive = parseHttpBuffer(conn)
@@ -244,11 +251,11 @@ static int parse_http_buffer(lua_State *L) {
     lua_settop(L, 2);
 	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
 	http_parser* parser = &lhttp_parser->parser;
-	const luaw_connection_ref_t* conn_ref = luaL_checkudata(L, 2, LUA_CONNECTION_META_TABLE);
-	connection_t* conn = conn_ref->conn;
-	
+	connection_t* conn = luaL_checkudata(L, 2, LUA_CONNECTION_META_TABLE);
+
 	char* buff = PARSE_START(conn);
 	const size_t len = PARSE_LEN(conn);
+
 	const int nparsed = http_parser_execute(parser, &parser_settings, buff, len);
 	const int remaining = len - nparsed;
 
@@ -256,11 +263,11 @@ static int parse_http_buffer(lua_State *L) {
         lua_pushboolean(L, 0);
         lua_pushfstring(L, "400 Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%.60s\n", parser->http_errno, len, nparsed, buff);
         return 2;
-    } 
+    }
 
     lua_pushinteger(L, lhttp_parser->http_cb);
     lua_pushinteger(L, remaining);
-    int nresults = 3;    
+    int nresults = 3;
     switch(lhttp_parser->http_cb) {
 
         case http_cb_on_headers_complete:
@@ -287,16 +294,16 @@ static int parse_http_buffer(lua_State *L) {
         default:
             lua_pushlstring(L, lhttp_parser->start, lhttp_parser->len);
     }
-    
+
 	if (remaining == 0) {
 	    /* buffer fully parsed */
 	    clear_read_buffer(conn);
 	} else {
         /* "forward" buffer to the end of last parsed request and un-pause the parser */
         conn->parse_len += nparsed;
-    } 
-    http_parser_pause(parser, 0); 
-        
+    }
+    http_parser_pause(parser, 0);
+
     return nresults;
 }
 
@@ -318,19 +325,19 @@ LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
 	size_t len = 0;
 	const char* buff = luaL_checklstring(L, 1, &len);
 	int is_connect = lua_toboolean(L, 2);
-	
+
 	struct http_parser_url* parsed_url = (struct http_parser_url*) malloc(sizeof(struct http_parser_url));
 	if (parsed_url == NULL) {
 		return raise_lua_error(L, "500 Could not allocate memory for URL struct");
 	}
-	
+
 	int result = http_parser_parse_url(buff, len, is_connect, parsed_url);
 	if (result) {
 	    lua_pushnil(L);
 	    return 1;
 	}
-	
-	lua_createtable(L, 0 , 7);	
+
+	lua_createtable(L, 0 , 7);
 	push_url_part(L, buff, parsed_url, UF_SCHEMA);
 	push_url_part(L, buff, parsed_url, UF_HOST);
 	push_url_part(L, buff, parsed_url, UF_PORT);
@@ -338,7 +345,7 @@ LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
 	push_url_part(L, buff, parsed_url, UF_QUERY);
 	push_url_part(L, buff, parsed_url, UF_FRAGMENT);
 	push_url_part(L, buff, parsed_url, UF_USERINFO);
-		
+
 	free(parsed_url);
 	return 1;
 }
@@ -355,6 +362,7 @@ LUA_LIB_METHOD int luaw_to_http_error(lua_State *L) {
 
 static const struct luaL_Reg http_parser_methods[] = {
 	{"parseHttpBuffer", parse_http_buffer},
+	{"initHttpParser", luaw_init_http_parser},
 	{"parseHttpString", luaw_fn_place_holder},
 	{NULL, NULL}  /* sentinel */
 };

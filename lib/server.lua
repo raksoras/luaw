@@ -4,28 +4,32 @@ local server = require("luaw_server")
 local webapp = require("luaw_webapp")
 
 local function proxyHTTPStreaming(conn)
-    while true do
-        local req = luaw_lib.newServerHttpRequest(conn)    
+    local req = luaw_lib.newServerHttpRequest(conn)
+    local resp = luaw_lib.newServerHttpResponse(conn)
+
+    while (true) do
         local body = req:readFull()
         local url = req:getParsedURL()
 
         if ((url)and(url.path)) then
             local proxyReq = luaw_lib.newClientHttpRequest()
-            proxyReq.hostName = "hacksubscriber.us-east-1.dyntest.netflix.net"
+--            proxyReq.hostName = "hacksubscriber.us-east-1.dyntest.netflix.net"
+            proxyReq.hostName = "www.ebay.com"
             proxyReq.method = 'GET'
             proxyReq.url = url.path
-            proxyReq.port = 7001
-            proxyReq.headers = { Host = "hacksubscriber.us-east-1.dyntest.netflix.net" }
+--            proxyReq.port = 7001
+            proxyReq.headers = { Host = "www.ebay.com" }
 
             local proxyResp = proxyReq:connect()
             proxyReq:flush()
 
             local headersDone, mesgDone, body = false, false, nil
             while not headersDone do
+                print("PARSE_HEADERS {\n")
                 headersDone, mesgDone, body = proxyResp:readStreaming()
             end
-            
-            local resp = luaw_lib.newServerHttpResponse(conn)
+            print("}\n")
+
             resp:setStatus(proxyResp.status)
             local headers = proxyResp.headers
             for k,v in pairs(headers) do
@@ -33,32 +37,40 @@ local function proxyHTTPStreaming(conn)
                     resp:addHeader(k,v)
                 end
             end
-            
+
+            print("START_STREAMING{\n")
             resp:startStreaming()
-            
+            print("}\n")
+
             while true do
-                if body then 
-                    resp:appendBody(body) 
+                print("WRITE_BODY{\n")
+                if body then
+                    resp:appendBody(body)
                 end
                 if mesgDone then break end
+                print("}\n\nPARSE_BODY{\n")
                 headersDone,  mesgDone, body = proxyResp:readStreaming()
+                print("}\n\n")
             end
 
             resp:flush()
             proxyResp:close()
-            
-            if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then
-                resp:close()
-                break
-            end
         end
+
+        if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then break end
+
+--        req:reset()
+--        resp:reset()
     end
+
+--    req:close()
+--    resp:close()
 end
 
 local config = server.loadConfiguration(...)
 config.request_handler = proxyHTTPStreaming
 
-print("Starting server...") 
+print("Starting server...")
 
 logging.init(config)
 local server = server.init(config)
@@ -73,13 +85,14 @@ local runNextFromRunQueue = server.runNextFromRunQueue
 
 local status = true
 while status do
+    print("------------------<poll>------------------------")
     status = blockingPoll()
     -- bottom half processing of the runnable user threads
     local runnableCount = runQueueSize()
     for i=1, runnableCount do
         local tid = runNextFromRunQueue()
     end
-end 
+end
 
 print("Stoping server...")
 server.stop();

@@ -27,7 +27,7 @@ LUA_LIB_METHOD static int to_hex(lua_State* L) {
     if (num > 65536) {
         raise_lua_error(L, "toHex called with input %d, which is larger than acceptable limit", num);
     }
-    
+
     char hex[5];
     sprintf(hex, "%x", num);
     lua_pushstring(L, hex);
@@ -37,7 +37,7 @@ LUA_LIB_METHOD static int to_hex(lua_State* L) {
 /* sets up error code and error message on the Lua stack to be returned by the original C
    function called from Lua. */
 int error_to_lua(lua_State* L, const char* fmt, ...) {
-    lua_settop(L, 0); //remove success status and params table from stack    
+    lua_settop(L, 0); //remove success status and params table from stack
     lua_pushboolean(L, 0);  //set status to false in case of error
     va_list argp;
     va_start(argp, fmt);
@@ -112,15 +112,15 @@ LUA_LIB_METHOD static int write_log(lua_State* l_thread) {
         if ((str != NULL)||(len > 0)) {
             char* log_mesg = malloc(len * sizeof(char));
             if (log_mesg != NULL) {
-                memcpy(log_mesg, str, len);                  
+                memcpy(log_mesg, str, len);
                 uv_fs_t* write_req = (uv_fs_t*)malloc(sizeof(uv_fs_t));
-                
+
                 if (write_req) {
                     write_req->data = &logfile;
                     uv_buf_t buff = uv_buf_init(log_mesg, len);
                     uv_loop_t* loop = uv_default_loop();
-                    
-                    int rotate_log = lua_toboolean(l_thread, 2);                
+
+                    int rotate_log = lua_toboolean(l_thread, 2);
                     if (rotate_log == 0) {
                         int rc = uv_fs_write(loop, write_req, logfile, &buff, 1, -1, on_log_write);
                         if (rc != 0) {
@@ -137,7 +137,7 @@ LUA_LIB_METHOD static int write_log(lua_State* l_thread) {
             }
         }
     }
-    
+
     lua_pushinteger(l_thread, log_state);
     return 1;
 }
@@ -151,7 +151,7 @@ int luaw_fn_place_holder(lua_State *L) {
 }
 
 void make_metatable(lua_State *L, const char* mt_name, const luaL_Reg* mt_funcs) {
-	luaL_newmetatable(L, mt_name);	
+	luaL_newmetatable(L, mt_name);
 	luaL_setfuncs(L, mt_funcs, 0);
 	/* client metatable.__index = client metatable */
 	lua_pushstring(L, "__index");
@@ -168,7 +168,7 @@ static const struct luaL_Reg luaw_lib[] = {
 	{"parseURL", luaw_parse_url},
 	{"toHttpError", luaw_to_http_error},
 	{"storeHttpParam", luaw_fn_place_holder},
-	{"newConnection", luaw_new_connection_ref},
+	{"newConnection", new_connection_lua},
 	{"newServer", luaw_new_server},
 	{"connect", client_connect},
 	{"resolveDNS", dns_resolve},
@@ -184,7 +184,7 @@ static const struct luaL_Reg luaw_lib[] = {
 };
 
 LUA_LIB_METHOD int luaw_open_lib (lua_State *L) {
-    luaw_init_http_lib(L);	
+    luaw_init_http_lib(L);
     luaw_init_tcp_lib(L);
     luaw_init_lpack_lib(L);
     luaL_newlib(L, luaw_lib);
