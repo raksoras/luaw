@@ -8,10 +8,9 @@ local function proxyHTTPStreaming(conn)
     local resp = luaw_lib.newServerHttpResponse(conn)
 
     while (true) do
-print(11)
         local body = req:readFull()
         local url = req:getParsedURL()
-
+	
         if ((url)and(url.path)) then
             local proxyReq = luaw_lib.newClientHttpRequest()
 --            proxyReq.hostName = "hacksubscriber.us-east-1.dyntest.netflix.net"
@@ -29,7 +28,6 @@ print(11)
                 headersDone, mesgDone, body = proxyResp:readStreaming()
             end
 
-print("headers end "..tostring(mesgDone))
             resp:setStatus(proxyResp.status)
             local headers = proxyResp.headers
             for k,v in pairs(headers) do
@@ -37,23 +35,21 @@ print("headers end "..tostring(mesgDone))
                     resp:addHeader(k,v)
                 end
             end
-print(39)
+
             resp:startStreaming()
-print(41)
+
             while true do
                 if body then
                     resp:appendBody(body)
                 end
-print(46)
                 if mesgDone then break end
-print("read body")
                 headersDone,  mesgDone, body = proxyResp:readStreaming()
             end
-print("req/resp end")
+
             resp:flush()
             proxyResp:close()
         end
-print("conn end")
+
         if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then break end
 
         req:reset()
@@ -91,6 +87,7 @@ while status do
         local tid = runNextFromRunQueue()
     end
     i = i + 1
+--	io.read()
 end
 
 print("Stoping server...")

@@ -444,19 +444,19 @@ local function fillHTTPBuffer(conn, str, isChunked)
     return assert(conn:appendBuffer(str, isChunked))
 end
 
-local function writeHTTPBuffer(conn, isChunked, writeTimeout)
+local function writeHTTPBuffer(conn, writeTimeout, isChunked)
     if (isChunked) then
         assert(conn:addChunkEnvelope())
     end
     return assert(conn:write(writeTimeout))
 end
 
-local function bufferAndWrite(conn, str, isChunked, writeTimeout)
+local function bufferAndWrite(conn, str, writeTimeout, isChunked)
 print("BufferAndWrite: "..tostring(str))
     local remainingCapacity, remainingStr = fillHTTPBuffer(conn, str, isChunked)
     while remainingStr do
         -- buffer full with input string remaining. Send buffer over wire to make space.
-        assert(writeHTTPBuffer(conn, isChunked, writeTimeout))
+        assert(writeHTTPBuffer(conn, writeTimeout, isChunked))
         remainingCapacity, remainingStr =  fillHTTPBuffer(conn, remainingStr, isChunked)
     end
 end
@@ -490,7 +490,7 @@ local function startStreaming(resp)
 
     local bodyChunks = rawget(resp, "bodyChunks")
     if ((bodyChunks)and(#bodyChunks > 0)) then
-        bufferAndWrite(conn, table.concat(bodyChunks), true, resp.writeTimeout)
+        bufferAndWrite(conn, table.concat(bodyChunks), resp.writeTimeout, true)
         resp.bodyChunks = nil
     end
 end
@@ -500,7 +500,7 @@ local function appendBody(resp, bodyPart)
 
     if resp.luaw_is_chunked then
         -- send connection's buffer full of chunk as they fill
-        bufferAndWrite(resp.luaw_conn, tostring(bodyPart), true, resp.writeTimeout)
+        bufferAndWrite(resp.luaw_conn, tostring(bodyPart), resp.writeTimeout, true)
     else
         -- buffer complete body in memory in order to calculate Content-Length
         local bodyChunks = rawget(resp, "bodyChunks")

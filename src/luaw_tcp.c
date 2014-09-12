@@ -535,24 +535,24 @@ static int add_http_chunk_envelope(lua_State* l_thread) {
     char* base = conn->write_buffer.base;
     const size_t len = conn->write_buffer.len;
 
-    if (len <= CHUNK_HEADER_LEN) {
-step
-        return error_to_lua(l_thread, "500 Not enough space in buffer to add chunk header");
-    }
-    if ((buff_size - len) < 2) {
-step
-        return error_to_lua(l_thread, "500 Not enough space in buffer to add chunk trailer");
-    }
+	if (len > 0) {
+		if (len <= CHUNK_HEADER_LEN) {
+			return error_to_lua(l_thread, "500 Not enough space in buffer to add chunk header");
+		}
+		if ((buff_size - len) < 2) {
+			return error_to_lua(l_thread, "500 Not enough space in buffer to add chunk trailer");
+		}
 
-    /* prefix chunk length in hex */
-    sprintf(base, "%04zx", (len - CHUNK_HEADER_LEN));
-    base[4] = '\r';
-    base[5] = '\n';
+		/* prefix chunk length in hex */
+		sprintf(base, "%04zx", (len - CHUNK_HEADER_LEN));
+		base[4] = '\r';
+		base[5] = '\n';
 
-    /*  suffix chunk with "\r\n" */
-    base[len] = '\r';
-    base[len+1] = '\n';
-    conn->write_buffer.len = len + 2; //accounting for added \r\n
+		/*  suffix chunk with "\r\n" */
+		base[len] = '\r';
+		base[len+1] = '\n';
+		conn->write_buffer.len = len + 2; //accounting for added \r\n
+	}
 
     lua_pushboolean(l_thread, 1);
     return 1;
