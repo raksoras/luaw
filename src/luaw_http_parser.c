@@ -261,7 +261,7 @@ static int parse_http_buffer(lua_State *L) {
 
     if ((remaining > 0)&&(parser->http_errno != HPE_PAUSED)) {
         lua_pushboolean(L, 0);
-        lua_pushfstring(L, "400 Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%.60s\n", parser->http_errno, len, nparsed, buff);
+        lua_pushfstring(L, "400 Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%s\n", parser->http_errno, len, nparsed, buff);
         return 2;
     }
 

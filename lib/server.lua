@@ -8,6 +8,7 @@ local function proxyHTTPStreaming(conn)
     local resp = luaw_lib.newServerHttpResponse(conn)
 
     while (true) do
+print(11)
         local body = req:readFull()
         local url = req:getParsedURL()
 
@@ -25,11 +26,10 @@ local function proxyHTTPStreaming(conn)
 
             local headersDone, mesgDone, body = false, false, nil
             while not headersDone do
-                print("PARSE_HEADERS {\n")
                 headersDone, mesgDone, body = proxyResp:readStreaming()
             end
-            print("}\n")
 
+print("headers end "..tostring(mesgDone))
             resp:setStatus(proxyResp.status)
             local headers = proxyResp.headers
             for k,v in pairs(headers) do
@@ -37,34 +37,31 @@ local function proxyHTTPStreaming(conn)
                     resp:addHeader(k,v)
                 end
             end
-
-            print("START_STREAMING{\n")
+print(39)
             resp:startStreaming()
-            print("}\n")
-
+print(41)
             while true do
-                print("WRITE_BODY{\n")
                 if body then
                     resp:appendBody(body)
                 end
+print(46)
                 if mesgDone then break end
-                print("}\n\nPARSE_BODY{\n")
+print("read body")
                 headersDone,  mesgDone, body = proxyResp:readStreaming()
-                print("}\n\n")
             end
-
+print("req/resp end")
             resp:flush()
             proxyResp:close()
         end
-
+print("conn end")
         if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then break end
 
---        req:reset()
---        resp:reset()
+        req:reset()
+        resp:reset()
     end
 
---    req:close()
---    resp:close()
+    req:close()
+    resp:close()
 end
 
 local config = server.loadConfiguration(...)
@@ -84,14 +81,16 @@ local runQueueSize = server.runQueueSize
 local runNextFromRunQueue = server.runNextFromRunQueue
 
 local status = true
+local i = 1
 while status do
-    print("------------------<poll>------------------------")
+    print("------------------ Poll# "..i.." ------------------------")
     status = blockingPoll()
     -- bottom half processing of the runnable user threads
     local runnableCount = runQueueSize()
     for i=1, runnableCount do
         local tid = runNextFromRunQueue()
     end
+    i = i + 1
 end
 
 print("Stoping server...")

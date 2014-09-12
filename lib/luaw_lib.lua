@@ -1,6 +1,6 @@
 local lfs = require('lfs')
 
-local luaw_open_lib, err = package.loadlib('/Users/saroskar/GitHub/luaw/lib_luaw.so', 'luaw_open_lib')
+local luaw_open_lib, err = package.loadlib('/apps/luaw/lib_luaw.so', 'luaw_open_lib')
 if not luaw_open_lib then
 	error(err)
 end
@@ -210,7 +210,6 @@ end
 
 local function onBody(req, cbtype, remaining, chunk)
     assert(cbtype == 7, remaining)
-    print("chunk = "..tostring(chunk))
     local bodyChunks = rawget(req, 'bodyChunks')
     if not bodyChunks then
         bodyChunks = {}
@@ -262,17 +261,19 @@ end
 
 
 local function readAndParse(req)
-    local conn = req.luaw_conn
-    local status, mesg = assert(conn:read(req.readTimeout))
+    if (not req.luaw_mesg_done) then
+   		local conn = req.luaw_conn
+    	local status, mesg = assert(conn:read(req.readTimeout))
 
-    if mesg == 'EOF' then
-        req.luaw_headers_done = true
-        req.luaw_mesg_done = true
-        req.EOF = true
-        req:addHeader('Connection', 'close')
-    else
-        parseHttpBuffer(req, conn)
-    end
+    	if mesg == 'EOF' then
+        	req.luaw_headers_done = true
+        	req.luaw_mesg_done = true
+        	req.EOF = true
+        	req:addHeader('Connection', 'close')
+    	else
+        	parseHttpBuffer(req, conn)
+    	end
+	end
     return req.luaw_headers_done, req.luaw_mesg_done
 end
 
@@ -364,23 +365,18 @@ end
 
 local function readStreaming(req)
     if not rawget(req, 'luaw_mesg_done') then
-    print(360)
+print('reads 368')
         local headersDone, mesgDone = req:readAndParse()
-        print(362)
         local bodyChunks = rawget(req, 'bodyChunks')
         local body = nil
-        print(365)
-        print("bodyChunks "..tostring(#bodyChunks))
+
         if ((bodyChunks)and(#bodyChunks > 0)) then
-        print(374)
             body = table.concat(bodyChunks)
-            print(368)
             clearArrayPart(bodyChunks)
         end
-        print(379)
         return headersDone, mesgDone, body
     end
-    print(382)
+
     return true, true, nil
 end
 
@@ -456,6 +452,7 @@ local function writeHTTPBuffer(conn, isChunked, writeTimeout)
 end
 
 local function bufferAndWrite(conn, str, isChunked, writeTimeout)
+print("BufferAndWrite: "..tostring(str))
     local remainingCapacity, remainingStr = fillHTTPBuffer(conn, str, isChunked)
     while remainingStr do
         -- buffer full with input string remaining. Send buffer over wire to make space.
@@ -593,9 +590,7 @@ connMT.write = function(self, writeTimeout)
 
     if ((status)and(nwritten > 0)) then
         -- there is something to write, yield for libuv callback
-        print("before write yielding: status = "..tostring(status)..", nwritten="..tostring(nwritten))
         status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
-        print("After write yielding: status = "..tostring(status)..", nwritten="..tostring(nwritten))
     end
     return status, nwritten
 end
