@@ -365,7 +365,6 @@ end
 
 local function readStreaming(req)
     if not rawget(req, 'luaw_mesg_done') then
-print('reads 368')
         local headersDone, mesgDone = req:readAndParse()
         local bodyChunks = rawget(req, 'bodyChunks')
         local body = nil
@@ -452,7 +451,6 @@ local function writeHTTPBuffer(conn, writeTimeout, isChunked)
 end
 
 local function bufferAndWrite(conn, str, writeTimeout, isChunked)
-print("BufferAndWrite: "..tostring(str))
     local remainingCapacity, remainingStr = fillHTTPBuffer(conn, str, isChunked)
     while remainingStr do
         -- buffer full with input string remaining. Send buffer over wire to make space.
