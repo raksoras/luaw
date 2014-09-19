@@ -363,7 +363,6 @@ LUA_LIB_METHOD int luaw_to_http_error(lua_State *L) {
 static const struct luaL_Reg http_parser_methods[] = {
 	{"parseHttpBuffer", parse_http_buffer},
 	{"initHttpParser", luaw_init_http_parser},
-	{"parseHttpString", luaw_fn_place_holder},
 	{NULL, NULL}  /* sentinel */
 };
 

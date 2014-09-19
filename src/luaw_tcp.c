@@ -16,21 +16,12 @@
 #include "luaw_common.h"
 #include "http_parser.h"
 #include "luaw_http_parser.h"
+#include "luaw_server.h"
 #include "luaw_tcp.h"
-
-int buff_size = 2048;        // default
-static lua_State* l_global = NULL;  // main global Lua state that spawns all other coroutines
-static char* server_ip;
-static int server_port;
 
 static struct addrinfo *log_server_addr = NULL;
 static int log_sock_fd = -1;
-
 static char hostname[512] = {'\0'};
-
-static int service_http_fn_ref;
-static int start_thread_fn_ref;
-static int resume_thread_fn_ref;
 
 static void close_if_active(uv_handle_t* handle, uv_close_cb close_cb) {
     if (handle && uv_is_active(handle)) {
@@ -226,7 +217,7 @@ static void clear_write_buffer(connection_t* conn) {
     if (conn) conn->write_buffer.len = 0;
 }
 
-static connection_t* new_connection(lua_State* L) {
+connection_t* new_connection(lua_State* L) {
     connection_t* conn = lua_newuserdata(L, sizeof(connection_t));
     if (conn == NULL) goto free_conn;
     luaL_setmetatable(L, LUA_CONNECTION_META_TABLE);
@@ -282,7 +273,7 @@ LUA_LIB_METHOD int new_connection_lua(lua_State* L) {
 static void send_read_data_to_lua(int tid, int status, size_t len, bool eof);
 static void send_write_results_to_lua(int tid, int status, size_t len);
 
-static inline void close_connection(connection_t* conn, int status, bool eof, bool warn_if_not_closed) {
+void close_connection(connection_t* conn, int status, bool eof, bool warn_if_not_closed) {
     if ((conn == NULL)||(conn->handle == NULL)) return;
     if (warn_if_not_closed) fprintf(stderr, "Possible resource leak, connection not properly closed\n");
 
@@ -770,79 +761,6 @@ LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {
     return 1;
 }
 
-/* create a new lua coroutine to service this conn, anchor it in "all active coroutines"
-*  global table to prevent it from being garbage collected and start the coroutine
-*/
-LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
-    if (status) {
-        raise_lua_error(l_global, "500 Error in on_server_connect callback: %s\n", uv_strerror(status));
-        return;
-    }
-
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, start_thread_fn_ref);
-    assert(lua_isfunction(l_global, -1));
-
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, service_http_fn_ref);
-    assert(lua_isfunction(l_global, -1));
-
-    connection_t * conn = new_connection(l_global);
-
-    status = uv_tcp_init(server->loop, conn->handle);
-    if (status) {
-        close_connection(conn, status, false, false);
-        fprintf(stderr, "Could not initialize memory for a new connection\n");
-        return;
-    }
-
-    status = uv_accept(server, (uv_stream_t*) conn->handle);
-    if (status) {
-        close_connection(conn, status, false, false);
-        fprintf(stderr, "500 Error accepting incoming conn: %s\n", uv_strerror(status));
-        return;
-    }
-
-    status = lua_pcall(l_global, 2, 2, 0);
-    if (status) {
-        fprintf(stderr, "******** Error starting new client connect thread: %s (%d) *********\n", lua_tostring(l_global, -1), status);
-    }
-}
-
-/* Lua call spec:
-* server = new_server(start_thread_fn, resume_thread_fn,
-    {server_ip, server_port, connection_buffer_size, request_handler})
-*/
-LUA_LIB_METHOD int luaw_new_server(lua_State *L) {
-    lua_pushvalue(L, 1);
-    start_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    lua_pushvalue(L, 2);
-    resume_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    lua_getfield(L, 3, "server_ip");
-    server_ip = (char *)lua_tostring(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, 3, "server_port");
-    server_port = lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, 3, "connection_buffer_size");
-    buff_size = lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, 3, "request_handler");
-    service_http_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    luaw_server_t* luaw_server = lua_newuserdata(L, sizeof(luaw_server_t));
-    if (luaw_server == NULL) {
-        return raise_lua_error(L, "Could not allocate memory for Luaw server\n");
-    }
-    luaL_setmetatable(L, LUA_SERVER_META_TABLE);
-    luaw_server->event_loop = uv_default_loop();
-
-    return 1;
-}
-
 LUA_LIB_METHOD int connect_to_syslog(lua_State *L) {
     int rc = -1;
     int flags = 1;
@@ -910,55 +828,6 @@ LUA_LIB_METHOD int get_hostname_lua(lua_State *L) {
     return 1;
 }
 
-LUA_OBJ_METHOD static int start_server(lua_State *L) {
-    luaw_server_t* luaw_server = luaL_checkudata(L, 1, LUA_SERVER_META_TABLE);
-
-    struct sockaddr_in addr;
-    int err_code = uv_ip4_addr(server_ip, server_port, &addr);
-    if (err_code) {
-        return luaL_error(L, "Error initializing socket address: %s\n", uv_strerror(err_code));
-    }
-
-    uv_tcp_init(luaw_server->event_loop, &luaw_server->server);
-
-    err_code = uv_tcp_bind(&luaw_server->server, (const struct sockaddr*) &addr, 0);
-    if (err_code) {
-        return luaL_error(L, "Error binding to port %d : %s\n", server_port, uv_strerror(err_code));
-    }
-
-    err_code = uv_listen((uv_stream_t*)&luaw_server->server, 128, on_server_connect);
-    if (err_code) {
-        return luaL_error(L, "Error listening on port %d : %s\n", server_port, uv_strerror(err_code));
-    }
-
-    return 1;
-}
-
-LUA_OBJ_METHOD static int run_loop_once(lua_State *L) {
-    l_global = L;
-    luaw_server_t* luaw_server = luaL_checkudata(l_global, 1, LUA_SERVER_META_TABLE);
-    int status = uv_run(luaw_server->event_loop, UV_RUN_ONCE);
-    lua_pushboolean(L, status);
-    return 1;
-}
-
-LUA_OBJ_METHOD static int run_loop_no_block(lua_State *L) {
-    l_global = L;
-    luaw_server_t* luaw_server = luaL_checkudata(l_global, 1, LUA_SERVER_META_TABLE);
-    int status = uv_run(luaw_server->event_loop, UV_RUN_NOWAIT);
-    lua_pushboolean(L, status);
-    return 1;
-}
-
-LUA_OBJ_METHOD static int stop_server(lua_State *L) {
-    l_global = L;
-    luaw_server_t* luaw_server = luaL_checkudata(l_global, 1, LUA_SERVER_META_TABLE);
-    if (luaw_server->event_loop) {
-        uv_stop(luaw_server->event_loop);
-    }
-    return 0;
-}
-
 static const struct luaL_Reg luaw_connection_methods[] = {
 	{"startReading", start_reading},
 	{"read", read_check},
@@ -969,26 +838,14 @@ static const struct luaL_Reg luaw_connection_methods[] = {
 	{"addChunkEnvelope", add_http_chunk_envelope},
 	{"write", write_buffer},
 	{"close", close_connection_lua},
-	{"newServerHttpRequest", luaw_fn_place_holder},
-	{"newServerHttpResponse", luaw_fn_place_holder},
-	{"newClientHttpRequest", luaw_fn_place_holder},
 	{"__gc", connection_gc},
     {NULL, NULL}  /* sentinel */
-};
-
-static const struct luaL_Reg luaw_server_methods[] = {
-    {"start", start_server},
-	{"blockingPoll", run_loop_once},
-    {"nonBlockingPoll", run_loop_no_block},
-    {"stop", stop_server},
-	{NULL, NULL}  /* sentinel */
 };
 
 static const struct luaL_Reg luaw_user_timer_methods[] = {
 	{"start", start_user_timer},
 	{"stop", stop_user_timer},
 	{"wait", wait_user_timer},
-	{"sleep", luaw_fn_place_holder},
 	{"__gc", timer_ref_gc},
 	{NULL, NULL}  /* sentinel */
 };
@@ -996,7 +853,6 @@ static const struct luaL_Reg luaw_user_timer_methods[] = {
 
 void luaw_init_tcp_lib (lua_State *L) {
 	make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
-	make_metatable(L, LUA_SERVER_META_TABLE, luaw_server_methods);
 	make_metatable(L, LUA_USER_TIMER_META_TABLE, luaw_user_timer_methods);
 }
 

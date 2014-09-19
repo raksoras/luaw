@@ -1,18 +1,36 @@
-local luaw_lib = require("luaw_lib")
-local logging = require("luaw_logging")
-local server = require("luaw_server")
-local webapp = require("luaw_webapp")
+Luaw = require("luaw_lib")
+logging = require("luaw_logging")
+scheduler = require("luaw_scheduler")
+webapp = require("luaw_webapp")
 
-local function proxyHTTPStreaming(conn)
-    local req = luaw_lib.newServerHttpRequest(conn)
-    local resp = luaw_lib.newServerHttpResponse(conn)
+-- Init deployed webapps
+if ((webapp_config)and(webapp_config.webapps_dir)) then
+    local webapps = webapp.findFiles(webapp_config.webapps_dir, ".-%-webapp%.cfg", {})
+    if webapps then
+        for i, webAppCfgFile in ipairs(webapps) do
+            Luaw.formattedLine('Starting webapp '..i..'# '..webAppCfgFile, 80, '-', '\n')
+            dofile(webAppCfgFile) -- defines global variable webapp
+            local app = webapp.loadWebApp()
+            webapp.startWebApp(app)
+            Luaw.formattedLine('Webapp '..i..'# '..webAppCfgFile..' started', 80, '-', '\n')
+            webapp = nil  -- reset global variable
+        end
+    end
+end
+
+
+
+
+function request_handler(conn)
+    local req = Luaw.newServerHttpRequest(conn)
+    local resp = Luaw.newServerHttpResponse(conn)
 
     while (true) do
         local body = req:readFull()
         local url = req:getParsedURL()
-	
+
         if ((url)and(url.path)) then
-            local proxyReq = luaw_lib.newClientHttpRequest()
+            local proxyReq = Luaw.newClientHttpRequest()
 --            proxyReq.hostName = "hacksubscriber.us-east-1.dyntest.netflix.net"
             proxyReq.hostName = "www.ebay.com"
             proxyReq.method = 'GET'
@@ -60,36 +78,4 @@ local function proxyHTTPStreaming(conn)
     resp:close()
 end
 
-local config = server.loadConfiguration(...)
-config.request_handler = proxyHTTPStreaming
-
-print("Starting server...")
-
-logging.init(config)
-local server = server.init(config)
-webapp.init(config)
-server.start()
-
-print("Server started")
-
-local blockingPoll = server.blockingPoll
-local runQueueSize = server.runQueueSize
-local runNextFromRunQueue = server.runNextFromRunQueue
-
-local status = true
-local i = 1
-while status do
-    print("------------------ Poll# "..i.." ------------------------")
-    status = blockingPoll()
-    -- bottom half processing of the runnable user threads
-    local runnableCount = runQueueSize()
-    for i=1, runnableCount do
-        local tid = runNextFromRunQueue()
-    end
-    i = i + 1
---	io.read()
-end
-
-print("Stoping server...")
-server.stop();
-print("Server stopped")
+print("Whoa, I got run!")

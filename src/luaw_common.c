@@ -142,14 +142,6 @@ LUA_LIB_METHOD static int write_log(lua_State* l_thread) {
     return 1;
 }
 
-int luaw_fn_place_holder(lua_State *L) {
-	/* used as a place holder to size luaw_http_lib[] correctly. Replaced with actual
-	* functions implemented in Lua in luaw_http_lib.lua library wrapper
-	*/
-	return raise_lua_error(L,
-	"500 place holder lib function invoked. Supposed to be replaced by real lua function. Check luaw_lib.lua for missing definitions");
-}
-
 void make_metatable(lua_State *L, const char* mt_name, const luaL_Reg* mt_funcs) {
 	luaL_newmetatable(L, mt_name);
 	luaL_setfuncs(L, mt_funcs, 0);
@@ -167,9 +159,7 @@ static const struct luaL_Reg luaw_lib[] = {
 	{"newHttpResponseParser", luaw_new_http_response_parser},
 	{"parseURL", luaw_parse_url},
 	{"toHttpError", luaw_to_http_error},
-	{"storeHttpParam", luaw_fn_place_holder},
 	{"newConnection", new_connection_lua},
-	{"newServer", luaw_new_server},
 	{"connect", client_connect},
 	{"resolveDNS", dns_resolve},
 	{"newTimer", new_user_timer},
@@ -188,5 +178,6 @@ LUA_LIB_METHOD int luaw_open_lib (lua_State *L) {
     luaw_init_tcp_lib(L);
     luaw_init_lpack_lib(L);
     luaL_newlib(L, luaw_lib);
+    lua_setglobal(L, "Luaw");
 	return 1;
 }

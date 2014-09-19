@@ -3,7 +3,7 @@ local ds_lib = require('luaw_data_structs_lib')
 
 local log_module = {}
 
-local PATH_SEPARATOR = string.match (package.config, "[^\n]+") 
+local PATH_SEPARATOR = string.match (package.config, "[^\n]+")
 
 -- Log file states
 local LOG_NOT_OPEN = 0
@@ -48,69 +48,43 @@ log_module.SYSLOG_FACILITY_LOCAL7 = 23
 
 local logRoot = { }
 
-local logDir
-local logfileBaseName
-local logfileSizeLimit
-local logfileCountLimit
-local noOfLogLinesToBuffer
+local logDir = assert(log_config.log_dir, "Invalid log directory specified")
+local noOfLogLinesToBuffer = log_config.log_lines_buffer_count or 100
+local logfileBaseName = log_config.log_file_basename or "luaw-log"
+local logfileSizeLimit = log_config.log_file_size_limit or (1024 * 1024 * 10) -- 10MB
+local logfileCountLimit = log_config.log_file_count_limit or 99
+local logLineTimeFormat = log_config.log_line_timestamp_format or "%x %X"
+local logFileNameTimeFormat = log_config.log_filename_timestamp_format or '%Y%m%d-%H%M%S'
 
-local logSize
-local logBuffer
+local syslogTag = log_config.syslog_tag or 'luaw'
+local syslogPresent = Luaw.syslogConnect(log_config.syslog_server, log_config.syslog_port)
+logRoot.facility = log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
+local hostname = Luaw.hostname()
+
+
+local logSequenceNum = 0
+local logSize = 0
+local logBuffer = ds_lib.newOverwrittingRingBuffer(noOfLogLinesToBuffer + 32)
 local noOfLogLinesDropped = 0
 
-local hostname
-local syslogTag
-local syslogPresent = false
-
-local logLineTimeFormat
-local logFileNameTimeFormat
-local currentTime
 local currentTimeStr
 local syslogTimeStr
 
-local logSequenceNum = 0
-
-log_module.updateCurrentTime = function(t)
-    currentTime = t
+log_module.updateCurrentTime = function(currentTime)
     currentTimeStr = os.date(logLineTimeFormat, currentTime)
     if syslogPresent then
         syslogTimeStr = os.date("%b %d %X", currentTime)
     end
 end
 
-local function nextLogSequenceNum() 
+local function nextLogSequenceNum()
     if logSequenceNum > logfileCountLimit then logSequenceNum = 0 end
     logSequenceNum = logSequenceNum + 1
     return logSequenceNum
 end
 
-log_module.init = function(cfg)
-    logDir = assert(cfg.log_dir, "Invalid log directory specified")
-    assert(io.open(logDir..PATH_SEPARATOR..'luaw_test.log','a+'))
-    logLineTimeFormat = assert(cfg.log_line_timestamp_format, "Invalid log line time format specified")
-    logFileNameTimeFormat = assert(cfg.log_filename_timestamp_format, "Invalid file name time format specified")
-    logfileBaseName = assert(cfg.log_file_basename, "Invalid base log file base name specified")
-    logfileSizeLimit = assert(cfg.log_file_size_limit, "Invalid log file size limit specified")
-    logfileCountLimit = assert(cfg.log_file_count_limit, "Invalid log file count limit specified")
-    noOfLogLinesToBuffer = assert(cfg.log_lines_buffer_count, "Invalid log buffer size specified")
-    logBuffer = ds_lib.newOverwrittingRingBuffer(noOfLogLinesToBuffer + 32)
-    logSize = 0
-    
-    local syslogServer = cfg.syslog_server
-    local syslogPort = cfg.syslog_port
-    logRoot.facility = cfg.syslog_facility
-    syslogTag = cfg.syslog_tag
-    if (syslogServer and syslogPort) then
-        syslogPresent = luaw_lib.syslogConnect(syslogServer, syslogPort)
-        if not syslogPresent then print("Failed to init syslog connection") end
-    end
-    
-    hostname = luaw_lib.hostname()
-    log_module.updateCurrentTime()    
-end
-
 local function concatLogLines()
-    local temp = luaw_lib.createDict(logBuffer.filled+1, 0)
+    local temp = Luaw.createDict(logBuffer.filled+1, 0)
     local i = 1
     local logLine = logBuffer:take()
     while logLine do
@@ -126,32 +100,32 @@ local function logToFile(logLine)
     local added = logBuffer:offer(currentTimeStr..' '..logLine)
     if not added then noOfLogLinesDropped = noOfLogLinesDropped +1 end
 
-    local state = luaw_lib.logState()
-    
+    local state = Luaw.logState()
+
     if ((state == LOG_IS_OPEN)and(logBuffer.filled >= noOfLogLinesToBuffer)) then
         local logBatch = concatLogLines()
         logSize = logSize + string.len(logBatch)
         local rotateLog = (logSize >= logfileSizeLimit)
-        state = luaw_lib.writeLog(logBatch, rotateLog) 
+        state = Luaw.writeLog(logBatch, rotateLog)
     end
-    
+
     if (state == LOG_NOT_OPEN) then
         logSize = 0
-        local ts = os.date(logFileNameTimeFormat, currentTime)
+        local ts = os.date(logFileNameTimeFormat, os.time())
         local fileName = logDir..PATH_SEPARATOR..logfileBaseName..'-'..ts..'-'..nextLogSequenceNum()..'.log'
-        luaw_lib.openLog(fileName)
+        Luaw.openLog(fileName)
     end
 end
 
 local function syslog(priority, facility, mesg)
     local pri = priority + (facility * 8)
-    local logLine = string.format("<%d>%s %s %s: %s", pri, syslogTimeStr, hostname, syslogTag, mesg) 
-    luaw_lib.syslogSend(logLine);
+    local logLine = string.format("<%d>%s %s %s: %s", pri, syslogTimeStr, hostname, syslogTag, mesg)
+    Luaw.syslogSend(logLine);
 end
 
-local nameIterator = luaw_lib.splitter('.')
+local nameIterator = Luaw.splitter('.')
 local function splitName(name)
-    if not name then return luaw_lib.nilFn end
+    if not name then return Luaw.nilFn end
     return nameIterator, name, 0
 end
 
@@ -247,10 +221,10 @@ logRoot.debugf = function(logger, mesgFormat, ...)
     logf(logger, DEBUG, mesgFormat, ...)
 end
 
-local function getLogger(name) 
+local function getLogger(name)
     local logger = logRoot
     if (name == 'root') then return logger end
-    
+
     for idx, namePart in splitName(name) do
         local child = logger[namePart]
         if not child then
@@ -265,7 +239,7 @@ end
 
 log_module.getLogger = getLogger
 
-local function configureLogger(logCfg, logType) 
+local function configureLogger(logCfg, logType)
     local loggerName = assert(logCfg.name, "Logger name missing")
     local logLevel = assert(logCfg.level, "Logger level missing")
     local logger = assert(getLogger(loggerName), "Could not find logger "..loggerName)
@@ -273,14 +247,13 @@ local function configureLogger(logCfg, logType)
     return logger
 end
 
-log_module.file = function(logCfg) 
+log_module.file = function(logCfg)
     configureLogger(logCfg, FILE_LOG)
 end
 
-log_module.syslog = function(logCfg) 
+log_module.syslog = function(logCfg)
     local logger = configureLogger(logCfg, SYS_LOG)
-    logger.facility = logCfg.facility    
+    logger.facility = logCfg.facility
 end
-
 
 return log_module

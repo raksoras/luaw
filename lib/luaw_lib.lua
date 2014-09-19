@@ -1,23 +1,17 @@
 local lfs = require('lfs')
 
-local luaw_open_lib, err = package.loadlib('/apps/luaw/lib_luaw.so', 'luaw_open_lib')
-if not luaw_open_lib then
-	error(err)
-end
-local luaw_lib = assert(luaw_open_lib(), "Could not open luaw_lib")
-
 -- Thread states
-luaw_lib.TS_RUNNABLE = {"RUNNABLE"}
-luaw_lib.TS_DONE = {"DONE"}
-luaw_lib.TS_BLOCKED_EVENT = {"BLOCKED_ON_EVENT"}
-luaw_lib.TS_BLOCKED_THREAD = {"BLOCKED_ON_THREAD"}
+Luaw.TS_RUNNABLE = {"RUNNABLE"}
+Luaw.TS_DONE = {"DONE"}
+Luaw.TS_BLOCKED_EVENT = {"BLOCKED_ON_EVENT"}
+Luaw.TS_BLOCKED_THREAD = {"BLOCKED_ON_THREAD"}
 
-local TS_BLOCKED_EVENT = luaw_lib.TS_BLOCKED_EVENT
-local TS_RUNNABLE = luaw_lib.TS_RUNNABLE
+local TS_BLOCKED_EVENT = Luaw.TS_BLOCKED_EVENT
+local TS_RUNNABLE = Luaw.TS_RUNNABLE
 
-local DEFAULT_CONNECT_TIMEOUT = 8000
-local DEFAULT_READ_TIMEOUT = 5000
-local DEFAULT_WRITE_TIMEOUT = 5000
+local DEFAULT_CONNECT_TIMEOUT = server_config.connect_timeout or 8000
+local DEFAULT_READ_TIMEOUT = server_config.read_timeout or 3000
+local DEFAULT_WRITE_TIMEOUT = server_config.write_timeout or 3000
 
 EOF = 0
 CRLF = '\r\n'
@@ -93,7 +87,7 @@ setmetatable(http_status_codes, {
 })
 
 
-function luaw_lib.storeHttpParam(params, name , value)
+function Luaw.storeHttpParam(params, name , value)
 	oldValue = params[name]
     if (oldValue) then
 		-- handle multi-valued param names
@@ -109,7 +103,7 @@ function luaw_lib.storeHttpParam(params, name , value)
 	end
 end
 
-local parserMT = getmetatable(luaw_lib.newHttpRequestParser())
+local parserMT = getmetatable(Luaw.newHttpRequestParser())
 
 --[[ HTTP parser we use can invoke callback for the same HTTP field (status, URL, header
 name/value etc.) multiple times, each time passing only few characters for the current
@@ -303,7 +297,7 @@ local function parseParams(req)
         -- POST form params
         local contentType = req.headers['Content-Type']
         if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
-            local status, errMesg = luaw_lib:urlDecode(req.body, params)
+            local status, errMesg = Luaw:urlDecode(req.body, params)
         end
 
         -- GET query params
@@ -311,7 +305,7 @@ local function parseParams(req)
         if url then
             local queryString = url.queryString
             if queryString then
-                luaw_lib:urlDecode(queryString, params)
+                Luaw:urlDecode(queryString, params)
             end
         end
 
@@ -348,7 +342,7 @@ local function getParsedURL(req)
 
     if url then
         local method = req.method
-        parsedURL = luaw_lib.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
+        parsedURL = Luaw.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
     else
         parsedURL = {}
     end
@@ -568,13 +562,13 @@ local function close(req)
     end
 end
 
-local connMT = getmetatable(luaw_lib.newConnection())
+local connMT = getmetatable(Luaw.newConnection())
 local readInternal = connMT.read
 local writeInternal = connMT.write
 
 connMT.read = function(self, readTimeout)
     readTimeout = readTimeout or DEFAULT_READ_TIMEOUT
-    local status, mesg = readInternal(self, tid(), readTimeout)
+    local status, mesg = readInternal(self, scheduler.tid(), readTimeout)
     if ((status)and(mesg == 'WAIT')) then
         -- nothing in buffer, wait for libuv on_read callback
         status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
@@ -584,7 +578,7 @@ end
 
 connMT.write = function(self, writeTimeout)
     writeTimeout = writeTimeout or DEFAULT_WRITE_TIMEOUT
-    local status, nwritten = writeInternal(self, tid(), writeTimeout)
+    local status, nwritten = writeInternal(self, scheduler.tid(), writeTimeout)
 
     if ((status)and(nwritten > 0)) then
         -- there is something to write, yield for libuv callback
@@ -608,12 +602,12 @@ local function reset(req)
     req.statusMesg = nil
 end
 
-luaw_lib.newServerHttpRequest = function(conn)
+Luaw.newServerHttpRequest = function(conn)
 	local req = {
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
 	    headers = {},
-	    luaw_parser = luaw_lib:newHttpRequestParser(),
+	    luaw_parser = Luaw:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    readAndParse = readAndParse,
@@ -629,7 +623,7 @@ luaw_lib.newServerHttpRequest = function(conn)
 	return req;
 end
 
-luaw_lib.newServerHttpResponse = function(conn)
+Luaw.newServerHttpResponse = function(conn)
     local resp = {
         luaw_mesg_type = 'sresp',
         luaw_conn = conn,
@@ -654,7 +648,7 @@ local function newClientHttpResponse(conn)
 	    luaw_mesg_type = 'cresp',
 	    luaw_conn = conn,
 	    headers = {},
-	    luaw_parser = luaw_lib:newHttpResponseParser(),
+	    luaw_parser = Luaw:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    readAndParse = readAndParse,
@@ -669,17 +663,17 @@ local function newClientHttpResponse(conn)
 	return resp;
 end
 
-local connectInternal = luaw_lib.connect
+local connectInternal = Luaw.connect
 
 local function connect(req)
     local hostName, hostIP = req.hostName, req.hostIP
     assert((hostIP or hostName), "Either hostName or hostIP must be specified in request")
 
     local status, mesg = nil
-    local threadId = tid()
+    local threadId = scheduler.tid()
 
     if not hostIP then
-        status, mesg = luaw_lib.resolveDNS(hostName, threadId)
+        status, mesg = Luaw.resolveDNS(hostName, threadId)
         if status then
             -- initial resolveDNS succeeded, block for libuv callback
             status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
@@ -727,7 +721,7 @@ local function execute(req)
     return resp
 end
 
-luaw_lib.newClientHttpRequest = function()
+Luaw.newClientHttpRequest = function()
     local req = {
         luaw_mesg_type = 'creq',
         port = 80,
@@ -752,11 +746,11 @@ end
 
 
 -- Timer functions
-local timerMT = getmetatable(luaw_lib.newTimer())
+local timerMT = getmetatable(Luaw.newTimer())
 local waitInternal = timerMT.wait
 
 timerMT.wait = function(timer)
-    local status, elapsed = waitInternal(timer, tid())
+    local status, elapsed = waitInternal(timer, scheduler.tid())
     if ((status) and (not elapsed)) then
         -- timer not yet elapsed, wait for libuv on_read callback
         status, elapsed = coroutine.yield(TS_BLOCKED_EVENT)
@@ -769,7 +763,7 @@ timerMT.sleep = function(timer, timeout)
     timer:wait()
 end
 
-luaw_lib.splitter = function(splitCh)
+Luaw.splitter = function(splitCh)
     local separator = string.byte(splitCh, 1, 1)
     local byte = string.byte
 
@@ -791,11 +785,11 @@ luaw_lib.splitter = function(splitCh)
     end
 end
 
-luaw_lib.nilFn = function()
+Luaw.nilFn = function()
     return nil
 end
 
-luaw_lib.formattedLine = function(str, lineSize, paddingCh, beginCh, endCh)
+Luaw.formattedLine = function(str, lineSize, paddingCh, beginCh, endCh)
     lineSize = lineSize or 0
     paddingCh = paddingCh or ''
     beginCh = beginCh or ''
@@ -808,4 +802,4 @@ luaw_lib.formattedLine = function(str, lineSize, paddingCh, beginCh, endCh)
     print(string.format("%s %s %s %s %s", beginCh, padding, str, padding, endCh))
 end
 
-return luaw_lib
+return Luaw
