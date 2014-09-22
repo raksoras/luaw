@@ -288,14 +288,14 @@ local function loadWebApp()
     end
     app.views = views
 
-    -- load startup/shutdown hooks if any
+    --[[ load startup/shutdown hooks if any
     if webapp.loadOnStartUp then
         local hooks = {}
         for i, hookFile in ipairs(webapp.loadOnStartUp) do
             table.insert(hooks, dofile(webapp.appRoot..'/'..hookFile))
         end
         app.hooks = hooks
-    end
+    end]]
 
     return app
 end
@@ -328,18 +328,30 @@ local function startWebApp(app)
     app.compiledViews = compiledViews
     Luaw.formattedLine("compiled total "..#views.." view", 80, '*', nil, '\n')
 
-    -- run startup hooks
+    --[[ run startup hooks
     if app.hooks then
         for i, hook in ipairs(app.hooks) do
             hook(app, "start")
+        end
+    end]]
+end
+
+-- Init deployed webapps
+if ((luaw_webapp_confg)and(luaw_webapp_confg.webapps_dir)) then
+    local webapps = findFiles(luaw_webapp_confg.webapps_dir, ".-%-webapp%.cfg", {})
+    if webapps then
+        for i, webAppCfgFile in ipairs(webapps) do
+            Luaw.formattedLine('Starting webapp '..i..'# '..webAppCfgFile, 80, '-', '\n')
+            dofile(webAppCfgFile) -- defines global variable webapp
+            local app = loadWebApp()
+            startWebApp(app)
+            Luaw.formattedLine('Webapp '..i..'# '..webAppCfgFile..' started', 80, '-', '\n')
+            webapp = nil  -- reset global variable
         end
     end
 end
 
 return {
-    findFiles = findFiles,
-    loadWebApp = loadWebApp,
-    startWebApp = startWebApp,
     dispatchAction = dispatchAction,
     serviceHTTP = serviceHTTP
 }

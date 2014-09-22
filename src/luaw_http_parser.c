@@ -5,6 +5,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "uv.h"
 #include "luaw_common.h"
 #include "luaw_http_parser.h"
 #include "luaw_tcp.h"

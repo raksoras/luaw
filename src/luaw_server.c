@@ -15,20 +15,16 @@
 #include "uv.h"
 #include "luaw_common.h"
 #include "luaw_tcp.h"
-#include "luaw_server.h"
 
 static char* server_ip = "0.0.0.0";
 static int server_port = 80;
-int buff_size = 2048;
-
 static uv_tcp_t server;
 static uv_loop_t* event_loop;
-
-lua_State* l_global = NULL;  //main global Lua state that spawns all other coroutines
+static uv_signal_t shutdown_signal;
+static int is_live = 1;
 
 static int service_http_fn_ref;
 static int start_thread_fn_ref;
-int resume_thread_fn_ref;
 static int run_ready_threads_fn_ref;
 
 #define LUA_LOAD_FILE_BUFF_SIZE 1024
@@ -36,68 +32,80 @@ static int run_ready_threads_fn_ref;
 typedef struct {
     FILE *file;                             /* file being read */
     char buff[LUA_LOAD_FILE_BUFF_SIZE];     /* area for reading file */
-    int luaw_init_appended;                  /* is last line for luaw_init appended */
+    char* epilogue;
 } lua_load_buffer_t;
 
 
 static const char* lua_file_reader(lua_State* L, void* data, size_t* size) {
     lua_load_buffer_t *lb = (lua_load_buffer_t*)data;
 
-    if (lb->luaw_init_appended) return NULL;
+    if (lb->file == NULL) return NULL;
 
     if (feof(lb->file)) {
-        const char* init_str = "\ninit = require(\"luaw_init\")\n";
-        strcpy(lb->buff, init_str);
-        *size = strlen(lb->buff);
-        lb->luaw_init_appended = 1;
-        return lb->buff;
+        fclose(lb->file);
+        lb->file = NULL;
+        *size = (lb->epilogue != NULL) ? strlen(lb->epilogue) : 0;
+        return lb->epilogue;
     }
 
     *size = fread(lb->buff, 1, sizeof(lb->buff), lb->file);  /* read block */
     return lb->buff;
 }
 
+static void handle_shutdown_req(uv_signal_t* handle, int signum) {
+    if (signum == SIGHUP) {
+        fprintf(stderr, "shutdown request received\n");
+        is_live = 0;
+        uv_signal_stop(handle);
+    }
+}
+
 
 void init_luaw_server(lua_State* L) {
-    lua_getglobal(L, "request_handler");
-    if (lua_isfunction(L, -1)) {
-        service_http_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    } else {
-        fprintf(stderr, "Main HTTP request handler function (request_handler) not set\n");
+    lua_getglobal(L, "Luaw");
+    if (!lua_istable(L, -1)) {
+        fprintf(stderr, "Luaw library not initialized\n");
         exit(EXIT_FAILURE);
     }
 
-    lua_getglobal(L, "scheduler");
-    if (lua_istable(L, -1)) {
-        lua_getfield(L, -1, "resumeThreadId");
-        if (lua_isfunction(L, -1)) {
-            resume_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        } else {
-            fprintf(stderr, "resumeThreadId function not found in luaw scheduler\n");
-            exit(EXIT_FAILURE);
-        }
+    lua_getfield(L, -1, "request_handler");
+    if (!lua_isfunction(L, -1)) {
+        fprintf(stderr, "Main HTTP request handler function (Luaw.request_handler) not set\n");
+        exit(EXIT_FAILURE);
+    }
+    service_http_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-        lua_getfield(L, -1, "startSystemThread");
-        if (lua_isfunction(L, -1)) {
-            start_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        } else {
-            fprintf(stderr, "startSystemThread function not found in luaw scheduler\n");
-            exit(EXIT_FAILURE);
-        }
-
-        lua_getfield(L, -1, "runReadyThreads");
-        if (lua_isfunction(L, -1)) {
-            run_ready_threads_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        } else {
-            fprintf(stderr, "runReadyThreads function not found in luaw scheduler\n");
-            exit(EXIT_FAILURE);
-        }
-    } else {
+    lua_getfield(L, -1, "scheduler");
+    if (!lua_istable(L, -1)) {
         fprintf(stderr, "luaw scheduler not initialized\n");
         exit(EXIT_FAILURE);
     }
 
-    lua_getglobal(L, "server_config");
+    lua_getfield(L, -1, "resumeThreadId");
+    if (lua_isfunction(L, -1)) {
+        resume_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        fprintf(stderr, "resumeThreadId function not found in luaw scheduler\n");
+        exit(EXIT_FAILURE);
+    }
+
+    lua_getfield(L, -1, "startSystemThread");
+    if (lua_isfunction(L, -1)) {
+        start_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        fprintf(stderr, "startSystemThread function not found in luaw scheduler\n");
+        exit(EXIT_FAILURE);
+    }
+
+    lua_getfield(L, -1, "runReadyThreads");
+    if (lua_isfunction(L, -1)) {
+        run_ready_threads_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        fprintf(stderr, "runReadyThreads function not found in luaw scheduler\n");
+        exit(EXIT_FAILURE);
+    }
+
+    lua_getglobal(L, "luaw_server_config");
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "server_ip");
         if (lua_isstring(L, -1)) {
@@ -183,6 +191,9 @@ void start_server(lua_State *L) {
         fprintf(stderr, "Error listening on port %d : %s\n", server_port, uv_strerror(err_code));
         exit(EXIT_FAILURE);
     }
+
+    uv_signal_init(event_loop, &shutdown_signal);
+    uv_signal_start(&shutdown_signal, handle_shutdown_req, SIGHUP);
 }
 
 static int event_loop_once() {
@@ -197,13 +208,13 @@ static int event_loop_no_block() {
 
 static int server_loop(lua_State *L) {
     int status = 0;
-    while (true) {
+    while (is_live) {
         lua_settop(L, 0);
 
         status = event_loop_once();
         if (status == 0) {
             fprintf(stderr,"Error while running event loop: %s\n", uv_strerror(status));
-            exit(EXIT_FAILURE);
+            return EXIT_FAILURE;
         }
 
         /* do the bottom half processing, run ready threads that are waiting */
@@ -211,18 +222,43 @@ static int server_loop(lua_State *L) {
         status = lua_pcall(L, 0, 1, 0);
         if (status != LUA_OK) {
             fprintf(stderr,"Error while running ready threads for bottom half processing: %s\n", lua_tostring(L, -1));
-            exit(EXIT_FAILURE);
+            return EXIT_FAILURE;
         }
     }
-    return status;
+    return EXIT_SUCCESS;
 }
 
 static void stop_server(lua_State *L) {
     fprintf(stderr, "stopping server...\n");
+    uv_close((uv_handle_t *)&server, NULL);
     uv_stop(event_loop);
     lua_close(L);
 }
 
+static void run_lua_file(const char* filename, char* epilogue) {
+    lua_load_buffer_t lb;
+
+    lb.file = fopen(filename, "r");
+    if (lb.file == NULL) {
+        fprintf(stderr, "Could not open file %s for reading\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    lb.epilogue = epilogue;
+
+    int status = lua_load(l_global, lua_file_reader, &lb, filename, "t");
+    if (status != LUA_OK) {
+        fprintf(stderr, "Error while loading file: %s\n", filename);
+        fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
+        exit(EXIT_FAILURE);
+    }
+
+    status = lua_pcall(l_global, 0, 0, 0);
+    if (status != LUA_OK) {
+        fprintf(stderr, "Error while executing file: %s\n", filename);
+        fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
+        exit(EXIT_FAILURE);
+    }
+}
 
 int main (int argc, char* argv[]) {
 	if (argc < 2) {
@@ -242,30 +278,19 @@ int main (int argc, char* argv[]) {
     luaw_open_lib(l_global);
     lua_gc(l_global, LUA_GCRESTART, 0);
 
-    lua_load_buffer_t lb;
-    lb.luaw_init_appended = 0;
-    lb.file = fopen(argv[1], "r");
-    if (lb.file == NULL) {
-        fprintf(stderr, "Could not open configuration file %s for reading\n", argv[1]);
-        exit(EXIT_FAILURE);
-    }
+    /* load config file, mandatory */
+    run_lua_file(argv[1], "\ninit = require(\"luaw_init\")\n");
 
-    int status = lua_load(l_global, lua_file_reader, &lb, argv[1], "t");
-    if (status != LUA_OK) {
-        fprintf(stderr, "Error while loading file: %s\n", argv[1]);
-        fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
-        exit(EXIT_FAILURE);
-    }
-
-    status = lua_pcall(l_global, 0, 0, 0);
-    if (status != LUA_OK) {
-        fprintf(stderr, "Error while executing file: %s\n", argv[1]);
-        fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
-        exit(EXIT_FAILURE);
+    /* run other lua on startup script passed on the command line, if any */
+    for (int i=2; i < argc; i++) {
+        fprintf(stderr, "## Running %s \n", argv[i]);
+        run_lua_file(argv[i], NULL);
     }
 
     init_luaw_server(l_global);
     start_server(l_global);
-    server_loop(l_global);
+    int status = server_loop(l_global);
     stop_server(l_global);
+
+    exit(status);
 }

@@ -3,7 +3,6 @@
 #define LUAW_TCP_H
 
 #define LUA_CONNECTION_META_TABLE "_luaw_connection_MT_"
-#define LUA_USER_TIMER_META_TABLE "_luaw_user_timer_MT_"
 
 /* client connection's state: socket connection, coroutines servicing the connection
  and read/write buffers for the connection */
@@ -23,24 +22,6 @@ typedef struct {
     uv_timer_t* write_timer;    /* for write/connect timeout */
     uv_write_t* write_req;      /* write request */
 } connection_t;
-
-typedef enum {
-	INIT = 0,
-	TICKING,
-	ELAPSED
-}
-timer_state;
-
-typedef struct {
-    uv_timer_t handle;
-    timer_state state;
-    int lua_tid;            /* id of a lua thread waiting on this timer */
-} luaw_timer_t;
-
-typedef struct luaw_timer_ref {
-    luaw_timer_t* timer;
-} luaw_timer_ref_t;
-
 
 #define CHUNK_HEADER_LEN 6 //4 hex digits for chunk sizes up to 64K + 2 for \r\n
 

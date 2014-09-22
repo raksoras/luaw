@@ -16,195 +16,11 @@
 #include "luaw_common.h"
 #include "http_parser.h"
 #include "luaw_http_parser.h"
-#include "luaw_server.h"
 #include "luaw_tcp.h"
 
-static struct addrinfo *log_server_addr = NULL;
-static int log_sock_fd = -1;
-static char hostname[512] = {'\0'};
+static void send_read_data_to_lua(int tid, int status, size_t len, bool eof);
+static void send_write_results_to_lua(int tid, int status, size_t len);
 
-static void close_if_active(uv_handle_t* handle, uv_close_cb close_cb) {
-    if (handle && uv_is_active(handle)) {
-        uv_close(handle, close_cb);
-    }
-    handle->data = NULL;
-}
-
-static void close_if_open(uv_handle_t* handle, uv_close_cb close_cb) {
-    if (handle && !uv_is_closing(handle)) {
-        uv_close(handle, close_cb);
-    }
-    handle->data = NULL;
-}
-
-static void clear_user_timer(luaw_timer_t* timer) {
-    timer->state = INIT;
-    timer->lua_tid = 0;
-}
-
-int new_user_timer(lua_State* l_thread) {
-    luaw_timer_ref_t* ref = lua_newuserdata(l_thread, sizeof(luaw_timer_ref_t));
-    if (ref == NULL) {
-        raise_lua_error(l_thread, "Could not allocate memory for user timer lua reference");
-    }
-
-    luaw_timer_t *timer = (luaw_timer_t *)malloc(sizeof(luaw_timer_t));
-    ref->timer = timer;
-    if (timer == NULL) {
-        return raise_lua_error(l_thread, "Could not allocate memory for user timer");
-    }
-
-    luaL_setmetatable(l_thread, LUA_USER_TIMER_META_TABLE);
-    uv_timer_init(uv_default_loop(), &timer->handle);
-    timer->handle.data = timer;
-    clear_user_timer(timer);
-    return 1;
-}
-
-static luaw_timer_t* get_timer(lua_State *l_thread, int timer_idx) {
-    luaw_timer_ref_t* ref = luaL_checkudata(l_thread, timer_idx, LUA_USER_TIMER_META_TABLE);
-    if ((ref == NULL)||(ref->timer == NULL)){
-        raise_lua_error(l_thread, "Timer missing."); //never returns, longjmp
-    }
-    return ref->timer;
-}
-
-static void resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler) {
-    int tid = lua_tointeger(L, (0 - nargs));
-    if (tid) {
-        int rc = lua_pcall(L, nargs, nresults, errHandler);
-        if (rc != 0) {
-            fprintf(stderr, "******** Error resuming Lua thread# %d: %s (%d) *********\n", tid, lua_tostring(L, -1), rc);
-        }
-    }
-}
-
-/* lua call spec: status, timer_elapsed = timer:wait(tid)
-Success, timer elapsed:  status = true, timer_elapsed = true
-Success, timer not elapsed:  status = true, timer_elapsed = false
-Failure:  status = false, error message
-*/
-LIBUV_CALLBACK static void on_user_timer_timeout(uv_timer_t* handle) {
-    luaw_timer_t* timer = (luaw_timer_t*)handle->data;
-
-    if(timer->lua_tid) {
-        lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
-        lua_pushinteger(l_global, timer->lua_tid);
-        clear_user_timer(timer);
-
-        /* Lua call spec: status, time_elapsed/error message = timer:wait() */
-//        if (status) {
-//            lua_pushboolean(l_global, 0);
-//            lua_pushstring(l_global, uv_strerror(status));
-//        } else {
-            lua_pushboolean(l_global, 1);
-            lua_pushboolean(l_global, 1);
-//        }
-        resume_lua_thread(l_global, 3, 2, 0);
-    } else {
-        timer->state = ELAPSED;
-    }
-}
-
-/* lua call spec:
-Success:  status(true), nil = timer:start(timeout)
-Failure:  status(false), error message = timer:start(timeout)
-*/
-static int start_user_timer(lua_State* l_thread) {
-    luaw_timer_t* timer = get_timer(l_thread, 1);
-
-    if (timer->state != INIT) {
-        /* Timer is already started by another lua thread */
-        return error_to_lua(l_thread, "Could not start timer, timer state: %d", timer->state);
-    }
-
-    int timeout = lua_tointeger(l_thread, 2);
-    if (timeout <= 0) {
-        return error_to_lua(l_thread, "Invalid timeout value %d specified", timeout);
-    }
-
-    int rc = uv_timer_start(&timer->handle, on_user_timer_timeout, timeout, 0);
-    if (rc) {
-        return error_to_lua(l_thread, "Error starting timer: %s", uv_strerror(rc));
-    }
-
-    timer->state = TICKING;
-    lua_pushboolean(l_thread, 1);
-    return 1;
-}
-
-/* lua call spec: status, timer_elapsed = timer:wait(tid)
-Success, timer elapsed:  status = true, timer_elapsed = true
-Success, timer not elapsed:  status = true, timer_elapsed = false
-Failure:  status = false, error message
-*/
-int wait_user_timer(lua_State* l_thread) {
-    luaw_timer_t* timer = get_timer(l_thread, 1);
-
-    if (timer->state == ELAPSED) {
-        clear_user_timer(timer);
-        lua_pushboolean(l_thread, 1);
-        lua_pushboolean(l_thread, 1);
-    } else {
-        if (timer->state != TICKING) {
-            return error_to_lua(l_thread, "Attempt to wait on timer that is not started, timer state: %d", timer->state);
-        }
-        if (timer->lua_tid) {
-            return error_to_lua(l_thread, "Timer already is in use by thread %d", timer->lua_tid);
-        }
-        int tid = lua_tointeger(l_thread, 2);
-        if (tid <= 0) {
-            return error_to_lua(l_thread, "Invalid thread id %d specified", tid);
-        }
-
-        timer->lua_tid = tid;
-        lua_pushboolean(l_thread, 1);
-        lua_pushboolean(l_thread, 0);
-    }
-
-    return 2;
-}
-
-/* lua call spec: timer:stop() */
-static int stop_user_timer(lua_State* l_thread) {
-    luaw_timer_t* timer = get_timer(l_thread, 1);
-    if (timer->state == TICKING) {
-        uv_timer_stop(&timer->handle);
-        clear_user_timer(timer);
-    }
-    return 0;
-}
-
-LIBUV_CALLBACK static void on_user_timer_close(uv_handle_t* handle) {
-    if (handle) {
-        luaw_timer_t* timer = TO_TIMER(handle);
-        if (timer) {
-            if (timer->lua_tid) {
-                /* unblock waiting thread */
-                lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
-                lua_pushinteger(l_global, timer->lua_tid);
-                lua_pushboolean(l_global, 0);
-                lua_pushstring(l_global, uv_strerror(UV_ECANCELED));
-                resume_lua_thread(l_global, 3, 2, 0);
-            }
-            free(timer);
-        } else {
-            free(handle);
-        }
-    }
-}
-
-LUA_OBJ_METHOD static int timer_ref_gc(lua_State *L) {
-    luaw_timer_ref_t* ref= (luaw_timer_ref_t*) luaL_testudata(L, 1, LUA_USER_TIMER_META_TABLE);
-    if (ref && ref->timer) {
-        luaw_timer_t* timer = ref->timer;
-        ref->timer = NULL;       //don't free it twice!
-        uv_close((uv_handle_t*)&timer->handle, on_user_timer_close);
-    }
-    return 0;
-}
-
-/* TCP Connection methods */
 
 void clear_read_buffer(connection_t* conn) {
     if (conn) {
@@ -220,7 +36,6 @@ static void clear_write_buffer(connection_t* conn) {
 connection_t* new_connection(lua_State* L) {
     connection_t* conn = lua_newuserdata(L, sizeof(connection_t));
     if (conn == NULL) goto free_conn;
-    luaL_setmetatable(L, LUA_CONNECTION_META_TABLE);
 
     conn->handle = (uv_tcp_t*)malloc(sizeof(uv_tcp_t));
     if (!conn->handle) goto free_conn;
@@ -251,6 +66,7 @@ connection_t* new_connection(lua_State* L) {
     clear_write_buffer(conn);
     conn->lua_reader_tid = 0;
     conn->lua_writer_tid = 0;
+    luaL_setmetatable(L, LUA_CONNECTION_META_TABLE);
 
     return conn;
 
@@ -270,12 +86,12 @@ LUA_LIB_METHOD int new_connection_lua(lua_State* L) {
     return 1;
 }
 
-static void send_read_data_to_lua(int tid, int status, size_t len, bool eof);
-static void send_write_results_to_lua(int tid, int status, size_t len);
-
 void close_connection(connection_t* conn, int status, bool eof, bool warn_if_not_closed) {
-    if ((conn == NULL)||(conn->handle == NULL)) return;
-    if (warn_if_not_closed) fprintf(stderr, "Possible resource leak, connection not properly closed\n");
+    if (conn == NULL) return;
+
+    if ((warn_if_not_closed)&&(conn->handle != NULL)) {
+        fprintf(stderr, "Possible resource leak, connection not properly closed\n");
+    }
 
     if (conn->read_buffer.base) free(conn->read_buffer.base);
     conn->read_buffer.base = NULL;
@@ -344,8 +160,11 @@ LUA_OBJ_METHOD static int close_connection_lua(lua_State* l_thread) {
 }
 
 LUA_OBJ_METHOD static int connection_gc(lua_State *L) {
-     LUA_GET_CONN_OR_ERROR(L, 1, conn);
-     close_connection(conn, UV_ECANCELED, false, true);
+//     connection_t* conn = LUA_GET_CONN(L, 1);
+    LUA_GET_CONN_OR_ERROR(L, 1, conn);
+    step
+    close_connection(conn, UV_ECANCELED, false, true);
+    step
     return 0;
 }
 
@@ -761,73 +580,6 @@ LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {
     return 1;
 }
 
-LUA_LIB_METHOD int connect_to_syslog(lua_State *L) {
-    int rc = -1;
-    int flags = 1;
-    const char* log_server_ip = lua_tostring(L, 1);
-    const char* log_server_port = lua_tostring(L, 2);
-
-    if (log_server_ip && log_server_port) {
-        struct addrinfo hints;
-
-        memset(&hints, 0, sizeof(struct addrinfo));
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_DGRAM;
-        hints.ai_flags = 0;
-        hints.ai_protocol = 0;
-
-        rc = getaddrinfo(log_server_ip, log_server_port, &hints, &log_server_addr);
-        if (rc != 0) {
-            fprintf(stderr,"failed to get address for sys log server :%s\n",gai_strerror(rc));
-        } else {
-            rc = socket(log_server_addr->ai_family, log_server_addr->ai_socktype, log_server_addr->ai_protocol);
-            if (rc < 0) {
-                fprintf(stderr, "could not connect to sys log server\n");
-            } else {
-                log_sock_fd = rc;
-                #if defined(O_NONBLOCK)
-                    if (-1 == (flags = fcntl(log_sock_fd, F_GETFL, 0))) flags = 0;
-                    rc = fcntl(log_sock_fd, F_SETFL, flags | O_NONBLOCK);
-                #else
-                    rc = ioctl(log_sock_fd, FIONBIO, &flags);
-                #endif
-                if (rc < 0) {
-                    fprintf(stderr, "Error putting syslog connection in non blocking mode\n");
-                }
-            }
-        }
-    }
-
-    lua_pushboolean(L, (rc < 0) ? 0 : 1);
-    return 1;
-}
-
-LUA_LIB_METHOD int send_to_syslog(lua_State *L) {
-    if (log_sock_fd > 0) {
-        size_t len = 0;
-        const char* mesg = lua_tolstring(L, 1, &len);
-        if ((mesg)&&(len > 0)) {
-            sendto(log_sock_fd, mesg, len, MSG_DONTWAIT,log_server_addr->ai_addr, log_server_addr->ai_addrlen);
-        }
-    }
-    return 0;
-}
-
-static const char* get_hostname() {
-    if (hostname[0] == '\0') {
-        int rc = gethostname(hostname, 511);
-        if (rc < 0) {
-            strcpy(hostname, "localhost");
-        }
-    }
-    return hostname;
-}
-
-LUA_LIB_METHOD int get_hostname_lua(lua_State *L) {
-    lua_pushstring(L, get_hostname());
-    return 1;
-}
-
 static const struct luaL_Reg luaw_connection_methods[] = {
 	{"startReading", start_reading},
 	{"read", read_check},
@@ -842,17 +594,7 @@ static const struct luaL_Reg luaw_connection_methods[] = {
     {NULL, NULL}  /* sentinel */
 };
 
-static const struct luaL_Reg luaw_user_timer_methods[] = {
-	{"start", start_user_timer},
-	{"stop", stop_user_timer},
-	{"wait", wait_user_timer},
-	{"__gc", timer_ref_gc},
-	{NULL, NULL}  /* sentinel */
-};
-
-
 void luaw_init_tcp_lib (lua_State *L) {
 	make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
-	make_metatable(L, LUA_USER_TIMER_META_TABLE, luaw_user_timer_methods);
 }
 

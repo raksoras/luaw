@@ -17,9 +17,9 @@ local UPDATE_TIME_COUNTER_LIMIT = 10
 local scheduler = {}
 
 -- scheduler state
-local threadRegistry = ds_lib.newRegistry(server_config.thread_pool_size or 1024)
-local threadPool = ds_lib.newRingBuffer(server_config.thread_pool_size or 1024)
-local timesReuseThread = server_config.thread_reuse_limit or 1024
+local threadRegistry = ds_lib.newRegistry(luaw_server_config.thread_pool_size or 1024)
+local threadPool = ds_lib.newRingBuffer(luaw_server_config.thread_pool_size or 1024)
+local timesReuseThread = luaw_server_config.thread_reuse_limit or 1024
 local runQueueLen = 0
 local runQueueHead = nil
 local runQueueTail = nil

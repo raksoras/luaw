@@ -9,9 +9,9 @@ Luaw.TS_BLOCKED_THREAD = {"BLOCKED_ON_THREAD"}
 local TS_BLOCKED_EVENT = Luaw.TS_BLOCKED_EVENT
 local TS_RUNNABLE = Luaw.TS_RUNNABLE
 
-local DEFAULT_CONNECT_TIMEOUT = server_config.connect_timeout or 8000
-local DEFAULT_READ_TIMEOUT = server_config.read_timeout or 3000
-local DEFAULT_WRITE_TIMEOUT = server_config.write_timeout or 3000
+local DEFAULT_CONNECT_TIMEOUT = luaw_server_config.connect_timeout or 8000
+local DEFAULT_READ_TIMEOUT = luaw_server_config.read_timeout or 3000
+local DEFAULT_WRITE_TIMEOUT = luaw_server_config.write_timeout or 3000
 
 EOF = 0
 CRLF = '\r\n'
@@ -568,7 +568,7 @@ local writeInternal = connMT.write
 
 connMT.read = function(self, readTimeout)
     readTimeout = readTimeout or DEFAULT_READ_TIMEOUT
-    local status, mesg = readInternal(self, scheduler.tid(), readTimeout)
+    local status, mesg = readInternal(self, Luaw.scheduler.tid(), readTimeout)
     if ((status)and(mesg == 'WAIT')) then
         -- nothing in buffer, wait for libuv on_read callback
         status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
@@ -578,7 +578,7 @@ end
 
 connMT.write = function(self, writeTimeout)
     writeTimeout = writeTimeout or DEFAULT_WRITE_TIMEOUT
-    local status, nwritten = writeInternal(self, scheduler.tid(), writeTimeout)
+    local status, nwritten = writeInternal(self, Luaw.scheduler.tid(), writeTimeout)
 
     if ((status)and(nwritten > 0)) then
         -- there is something to write, yield for libuv callback
@@ -670,7 +670,7 @@ local function connect(req)
     assert((hostIP or hostName), "Either hostName or hostIP must be specified in request")
 
     local status, mesg = nil
-    local threadId = scheduler.tid()
+    local threadId = Luaw.scheduler.tid()
 
     if not hostIP then
         status, mesg = Luaw.resolveDNS(hostName, threadId)

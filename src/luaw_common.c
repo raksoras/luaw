@@ -2,18 +2,40 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include <lua.h>
 #include <lauxlib.h>
 
-#include "luaw_common.h"
 #include "uv.h"
+#include "luaw_common.h"
 #include "luaw_tcp.h"
 #include "luaw_http_parser.h"
+#include "luaw_timer.h"
 #include "lua_lpack.h"
+
+/* globals */
+lua_State* l_global = NULL; //main global Lua state that spawns all other coroutines
+int buff_size = 2048;       //default connection buffer size
+int resume_thread_fn_ref;   //Resume thread lua function
+
 
 static logfile_sate log_state = LOG_NOT_OPEN;
 static uv_file logfile;
+static struct addrinfo *log_server_addr = NULL;
+static int log_sock_fd = -1;
+static char hostname[512] = {'\0'};
+
+
+void resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler) {
+    int tid = lua_tointeger(L, (0 - nargs));
+    if (tid) {
+        int rc = lua_pcall(L, nargs, nresults, errHandler);
+        if (rc != 0) {
+            fprintf(stderr, "******** Error resuming Lua thread# %d: %s (%d) *********\n", tid, lua_tostring(L, -1), rc);
+        }
+    }
+}
 
 LUA_LIB_METHOD static int create_dict(lua_State* L) {
     int narr = luaL_checkint(L, 1);
@@ -142,6 +164,82 @@ LUA_LIB_METHOD static int write_log(lua_State* l_thread) {
     return 1;
 }
 
+LUA_LIB_METHOD int connect_to_syslog(lua_State *L) {
+    int rc = -1;
+    int flags = 1;
+    const char* log_server_ip = lua_tostring(L, 1);
+    const char* log_server_port = lua_tostring(L, 2);
+
+    if (log_server_ip && log_server_port) {
+        struct addrinfo hints;
+
+        memset(&hints, 0, sizeof(struct addrinfo));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        hints.ai_flags = 0;
+        hints.ai_protocol = 0;
+
+        rc = getaddrinfo(log_server_ip, log_server_port, &hints, &log_server_addr);
+        if (rc != 0) {
+            fprintf(stderr,"failed to get address for sys log server :%s\n",gai_strerror(rc));
+        } else {
+            rc = socket(log_server_addr->ai_family, log_server_addr->ai_socktype, log_server_addr->ai_protocol);
+            if (rc < 0) {
+                fprintf(stderr, "could not connect to sys log server\n");
+            } else {
+                log_sock_fd = rc;
+                #if defined(O_NONBLOCK)
+                    if (-1 == (flags = fcntl(log_sock_fd, F_GETFL, 0))) flags = 0;
+                    rc = fcntl(log_sock_fd, F_SETFL, flags | O_NONBLOCK);
+                #else
+                    rc = ioctl(log_sock_fd, FIONBIO, &flags);
+                #endif
+                if (rc < 0) {
+                    fprintf(stderr, "Error putting syslog connection in non blocking mode\n");
+                }
+            }
+        }
+    }
+
+    lua_pushboolean(L, (rc < 0) ? 0 : 1);
+    return 1;
+}
+
+LUA_LIB_METHOD int send_to_syslog(lua_State *L) {
+    if (log_sock_fd > 0) {
+        size_t len = 0;
+        const char* mesg = lua_tolstring(L, 1, &len);
+        if ((mesg)&&(len > 0)) {
+            sendto(log_sock_fd, mesg, len, MSG_DONTWAIT,log_server_addr->ai_addr, log_server_addr->ai_addrlen);
+        }
+    }
+    return 0;
+}
+
+static const char* get_hostname() {
+    if (hostname[0] == '\0') {
+        int rc = gethostname(hostname, 511);
+        if (rc < 0) {
+            strcpy(hostname, "localhost");
+        }
+    }
+    return hostname;
+}
+
+LUA_LIB_METHOD int get_hostname_lua(lua_State *L) {
+    lua_pushstring(L, get_hostname());
+    return 1;
+}
+
+void close_if_active(uv_handle_t* handle, uv_close_cb close_cb) {
+    if (handle != NULL) {
+        if (uv_is_active(handle)) {
+            uv_close(handle, close_cb);
+        }
+        handle->data = NULL;
+    }
+}
+
 void make_metatable(lua_State *L, const char* mt_name, const luaL_Reg* mt_funcs) {
 	luaL_newmetatable(L, mt_name);
 	luaL_setfuncs(L, mt_funcs, 0);
@@ -176,6 +274,7 @@ static const struct luaL_Reg luaw_lib[] = {
 LUA_LIB_METHOD int luaw_open_lib (lua_State *L) {
     luaw_init_http_lib(L);
     luaw_init_tcp_lib(L);
+    luaw_init_timer_lib(L);
     luaw_init_lpack_lib(L);
     luaL_newlib(L, luaw_lib);
     lua_setglobal(L, "Luaw");

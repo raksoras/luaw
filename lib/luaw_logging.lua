@@ -48,17 +48,17 @@ log_module.SYSLOG_FACILITY_LOCAL7 = 23
 
 local logRoot = { }
 
-local logDir = assert(log_config.log_dir, "Invalid log directory specified")
-local noOfLogLinesToBuffer = log_config.log_lines_buffer_count or 100
-local logfileBaseName = log_config.log_file_basename or "luaw-log"
-local logfileSizeLimit = log_config.log_file_size_limit or (1024 * 1024 * 10) -- 10MB
-local logfileCountLimit = log_config.log_file_count_limit or 99
-local logLineTimeFormat = log_config.log_line_timestamp_format or "%x %X"
-local logFileNameTimeFormat = log_config.log_filename_timestamp_format or '%Y%m%d-%H%M%S'
+local logDir = assert(luaw_log_config.log_dir, "Invalid log directory specified")
+local noOfLogLinesToBuffer = luaw_log_config.log_lines_buffer_count or 100
+local logfileBaseName = luaw_log_config.log_file_basename or "luaw-log"
+local logfileSizeLimit = luaw_log_config.log_file_size_limit or (1024 * 1024 * 10) -- 10MB
+local logfileCountLimit = luaw_log_config.log_file_count_limit or 99
+local logLineTimeFormat = luaw_log_config.log_line_timestamp_format or "%x %X"
+local logFileNameTimeFormat = luaw_log_config.log_filename_timestamp_format or '%Y%m%d-%H%M%S'
 
-local syslogTag = log_config.syslog_tag or 'luaw'
-local syslogPresent = Luaw.syslogConnect(log_config.syslog_server, log_config.syslog_port)
-logRoot.facility = log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
+local syslogTag = luaw_log_config.syslog_tag or 'luaw'
+local syslogPresent = Luaw.syslogConnect(luaw_log_config.syslog_server, luaw_log_config.syslog_port)
+logRoot.facility = luaw_log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
 local hostname = Luaw.hostname()
 
 
