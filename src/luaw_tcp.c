@@ -87,11 +87,10 @@ LUA_LIB_METHOD int new_connection_lua(lua_State* L) {
 }
 
 void close_connection(connection_t* conn, int status, bool eof, bool warn_if_not_closed) {
-    if (conn == NULL) return;
-
-    if ((warn_if_not_closed)&&(conn->handle != NULL)) {
-        fprintf(stderr, "Possible resource leak, connection not properly closed\n");
-    }
+    /* we flip conn->handle to NULL as a flag to declare all that needs to be freed in
+       this conn has been freed */
+    if ((conn == NULL)||(conn->handle == NULL)) return;
+    if (warn_if_not_closed) fprintf(stderr, "Possible resource leak, connection not properly closed\n");
 
     if (conn->read_buffer.base) free(conn->read_buffer.base);
     conn->read_buffer.base = NULL;
@@ -100,10 +99,13 @@ void close_connection(connection_t* conn, int status, bool eof, bool warn_if_not
     conn->write_buffer.base = NULL;
 
     close_if_active((uv_handle_t*)conn->read_timer, (uv_close_cb)free);
+    conn->read_timer = NULL;
     close_if_active((uv_handle_t*)conn->write_timer, (uv_close_cb)free);
+    conn->write_timer = NULL;
     close_if_active((uv_handle_t*)conn->handle, (uv_close_cb)free);
     conn->handle = NULL;
 
+    /* If the write_req->data is not null, write_req is in flight so do not free it */
     if (conn->write_req->data)
         conn->write_req->data = NULL;
     else
@@ -327,8 +329,8 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
         int tid = conn->lua_writer_tid;
         conn->lua_writer_tid = 0;
         stop_timer(conn->write_timer); //clear write timeout if any
-	int len = conn->write_buffer.len;
-	clear_write_buffer(conn);
+	    int len = conn->write_buffer.len;
+	    clear_write_buffer(conn);
         send_write_results_to_lua(tid, status, len);
         if (status) close_connection(conn, status, false, false);
     } else {
