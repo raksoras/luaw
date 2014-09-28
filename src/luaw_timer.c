@@ -154,9 +154,7 @@ void close_timer(luaw_timer_t* timer) {
 
 LUA_OBJ_METHOD static int timer_gc(lua_State *L) {
     luaw_timer_t* timer = LUA_GET_TIMER(L, 1);
-    step
     close_timer(timer);
-    step
     return 0;
 }
 

@@ -562,7 +562,9 @@ local function close(req)
     end
 end
 
-local connMT = getmetatable(Luaw.newConnection())
+local conn = Luaw.newConnection();
+local connMT = getmetatable(conn)
+conn:close()
 local readInternal = connMT.read
 local writeInternal = connMT.write
 

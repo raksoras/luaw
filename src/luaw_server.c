@@ -150,14 +150,14 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
 
     status = uv_tcp_init(server->loop, conn->handle);
     if (status) {
-        close_connection(conn, status, false, false);
+        close_connection(conn, status);
         fprintf(stderr, "Could not initialize memory for a new connection\n");
         return;
     }
 
     status = uv_accept(server, (uv_stream_t*) conn->handle);
     if (status) {
-        close_connection(conn, status, false, false);
+        close_connection(conn, status);
         fprintf(stderr, "500 Error accepting incoming conn: %s\n", uv_strerror(status));
         return;
     }
