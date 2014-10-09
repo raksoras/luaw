@@ -1,6 +1,4 @@
-local webapp = require("luaw_webapp")
-
-webapp.GET 'address/#block/:street/:city/:state/#zip' {
+action:GET 'address/#block/:street/:city/:state/#zip' {
 	function(req, resp, pathParams)
 	    address = {
 	        block = pathParams.block,

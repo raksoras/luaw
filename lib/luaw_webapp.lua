@@ -1,5 +1,5 @@
 local lfs = require('lfs')
-local luaw_lib = require("luaw_lib")
+local Luaw = require("luaw_lib")
 local template_compiler = require ("luaw_template_compiler")
 
 local registeredWebApps = {}
@@ -70,12 +70,14 @@ local function findAction(method, path)
         end
     end
 
-    local action = route[method]
-    if not action then
-        -- try catch call action as a fallback
-        action = route['SERVICE']
+    if (route) then
+        local action = route[method]
+        if not action then
+            -- try catch call action as a fallback
+            action = route['SERVICE']
+        end
+        return webApp, action, pathParams
     end
-    return webApp, action, pathParams
 end
 
 local function dispatchAction(req, resp)
@@ -258,13 +260,12 @@ local function toFullPath(appRoot, files)
     return fullPaths
 end
 
-local function loadWebApp()
+local function loadWebApp(appName, appDir)
     local app = {}
     setmetatable(app, webappMT)
 
-    local idx, appName = pathIterator(webapp.path, 0)
     app.path = assert(appName, "Missing mandatory configuration property 'path'")
-    app.appRoot = assert(webapp.appRoot, "Missing mandatory configuration property 'root_dir'")
+    app.appRoot = assert(appDir, "Missing mandatory configuration property 'root_dir'")
 
     if (registeredWebApps[app.path]) then
         error('Anothe web app is already registered for path '..app.path)
@@ -274,28 +275,19 @@ local function loadWebApp()
     app.root = { childRoutes = {} }
 
     -- Load resource handlers
-    local resources = toFullPath(webapp.appRoot, webapp.resources)
-    if webapp.resourcePattern then
-        resources = findFiles(webapp.appRoot, webapp.resourcePattern, resources)
+    local resources = toFullPath(app.appRoot, luaw_webapp.resources)
+    if luaw_webapp.resourcePattern then
+        resources = findFiles(app.appRoot, luaw_webapp.resourcePattern, resources)
     end
     assert((resources and (#resources > 0)), "Either 'resources' or 'resourcePattern' must be specified in a web app configuration")
     app.resources = resources
 
     -- Load view files if any
-    local views = toFullPath(webapp.appRoot, webapp.views)
-    if webapp.viewPattern then
-        views = findFiles(webapp.appRoot, webapp.viewPattern, views)
+    local views = toFullPath(app.appRoot, luaw_webapp.views)
+    if luaw_webapp.viewPattern then
+        views = findFiles(app.appRoot, luaw_webapp.viewPattern, views)
     end
     app.views = views
-
-    --[[ load startup/shutdown hooks if any
-    if webapp.loadOnStartUp then
-        local hooks = {}
-        for i, hookFile in ipairs(webapp.loadOnStartUp) do
-            table.insert(hooks, dofile(webapp.appRoot..'/'..hookFile))
-        end
-        app.hooks = hooks
-    end]]
 
     return app
 end
@@ -303,55 +295,58 @@ end
 local function startWebApp(app)
     -- register resources
     local resources = app.resources
-    Luaw.formattedLine('Loading resources', 80, '*', '\n')
     for i,resource in ipairs(resources) do
-        Luaw.formattedLine("    "..i.."# Loading resource "..resource)
-        -- declare global WebApp variable for the duration of the loadfile(resource)
-        webapp = app
+        Luaw.formattedLine(".Loading resource "..resource)
+        -- declare global variable 'action' for the duration of the loadfile(resource)
+        action = app
         local routeDefn = assert(loadfile(resource), string.format("Could not load resource %s", resource))
         routeDefn()
     end
-    Luaw.formattedLine("Loaded total "..#resources.." resources", 80, '*', nil, '\n')
+    Luaw.formattedLine("#Loaded total "..#resources.." resources\n")
 
     -- compile views
     local views = app.views
     local compiledViews = {}
-    Luaw.formattedLine('Compiling view files', 80, '*', '\n')
     local appRootLen = string.len(app.appRoot) + 1
     for i,view in ipairs(views) do
         local relativeViewPath = string.sub(view, appRootLen)
-        Luaw.formattedLine("    "..i.."# compiling view "..view)
+        Luaw.formattedLine(".Compiling view "..view)
         local compiledView = template_compiler.compileFile(view)
         compiledViews[relativeViewPath] = compiledView
     end
     app.views = nil
     app.compiledViews = compiledViews
-    Luaw.formattedLine("compiled total "..#views.." view", 80, '*', nil, '\n')
-
-    --[[ run startup hooks
-    if app.hooks then
-        for i, hook in ipairs(app.hooks) do
-            hook(app, "start")
-        end
-    end]]
+    Luaw.formattedLine("#Compiled total "..#views.." views")
 end
 
--- Init deployed webapps
-if ((luaw_webapp_confg)and(luaw_webapp_confg.webapps_dir)) then
-    local webapps = findFiles(luaw_webapp_confg.webapps_dir, ".-%-webapp%.cfg", {})
-    if webapps then
-        for i, webAppCfgFile in ipairs(webapps) do
-            Luaw.formattedLine('Starting webapp '..i..'# '..webAppCfgFile, 80, '-', '\n')
-            dofile(webAppCfgFile) -- defines global variable webapp
-            local app = loadWebApp()
-            startWebApp(app)
-            Luaw.formattedLine('Webapp '..i..'# '..webAppCfgFile..' started', 80, '-', '\n')
-            webapp = nil  -- reset global variable
+local function init()
+    if ((luaw_webapp_config)and(luaw_webapp_config.base_dir)) then
+        local root = luaw_webapp_config.base_dir
+        for webappName in lfs.dir(root) do
+            if (webappName ~= '.' and webappName ~= '..') then
+                local webappDir = root..DIR_SEPARATOR..webappName
+                local attrs = lfs.attributes(webappDir)
+                if ((attrs)and(attrs.mode == 'directory')) then
+                    local webappCfgFile = webappDir..DIR_SEPARATOR..'web.lua'
+                    if (lfs.attributes(webappCfgFile, 'mode') == 'file') then
+                        Luaw.formattedLine('Starting webapp '..webappName, 120, '*', '\n')
+                        dofile(webappCfgFile) -- defines global variable luaw_webapp
+                        local app = loadWebApp(webappName, webappDir)
+                        startWebApp(app)
+                        Luaw.formattedLine('Webapp '..webappName..' started', 120, '*')
+                        webapp = nil  -- reset global variable
+                    end
+                end
+            end
         end
     end
 end
 
+-- install REST HTTP app handler as a default request handler
+Luaw.request_handler = serviceHTTP
+
 return {
+    init = init,
     dispatchAction = dispatchAction,
     serviceHTTP = serviceHTTP
 }
