@@ -17,6 +17,7 @@
 #include "http_parser.h"
 #include "luaw_http_parser.h"
 #include "luaw_tcp.h"
+#include "lfs.h"
 
 
 void clear_read_buffer(connection_t* conn) {

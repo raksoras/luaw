@@ -1,4 +1,3 @@
-local lfs = require('lfs')
 local Luaw = require("luaw_lib")
 local template_compiler = require ("luaw_template_compiler")
 

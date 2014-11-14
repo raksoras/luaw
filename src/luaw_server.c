@@ -15,6 +15,7 @@
 #include "uv.h"
 #include "luaw_common.h"
 #include "luaw_tcp.h"
+#include "lfs.h"
 
 static char* server_ip = "0.0.0.0";
 static int server_port = 80;
@@ -201,11 +202,6 @@ static int event_loop_once() {
     return status;
 }
 
-static int event_loop_no_block() {
-    int status = uv_run(event_loop, UV_RUN_NOWAIT);
-    return status;
-}
-
 static int server_loop(lua_State *L) {
     int status = 0;
     while (is_live) {
@@ -256,8 +252,17 @@ static void run_lua_file(const char* filename, char* epilogue) {
     if (status != LUA_OK) {
         fprintf(stderr, "Error while executing file: %s\n", filename);
         fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
+        fprintf(stderr, "\n\t* Try running luaw_server from directory that contains \"bin\" directory containing the binary \"luaw_server\"\n");
+        fprintf(stderr, "\t* For example: ./bin/luaw_server <server_config_file>\n\n");
         exit(EXIT_FAILURE);
     }
+}
+
+static void set_lua_path(lua_State* L) {
+    lua_getglobal( L, "package" );
+    lua_pushliteral(L, "?;?.lua;./bin/?;./bin/?.lua;./lib/?;./lib/?.lua");
+    lua_setfield( L, -2, "path" );
+    lua_pop(L, 1);
 }
 
 int main (int argc, char* argv[]) {
@@ -276,9 +281,11 @@ int main (int argc, char* argv[]) {
     lua_gc(l_global, LUA_GCSTOP, 0);  /* stop collector during initialization */
     luaL_openlibs(l_global);  /* open libraries */
     luaw_open_lib(l_global);
+    luaopen_lfs(l_global);
     lua_gc(l_global, LUA_GCRESTART, 0);
 
     /* load config file, mandatory */
+    set_lua_path(l_global);
     run_lua_file(argv[1], "\ninit = require(\"luaw_init\")\n");
 
     /* run other lua on startup script passed on the command line, if any */

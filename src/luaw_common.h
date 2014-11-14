@@ -21,6 +21,10 @@ typedef enum {
 #define LUA_LIB_METHOD
 #define HTTP_PARSER_CALLBACK
 
+#define Q(x) #x
+#define QUOTE(x) Q(x)
+
+
 #define step  fprintf(stderr, "At line# %d function(%s) in file %s\n", __LINE__, __FUNCTION__, __FILE__);
 #define debug_i(s) fprintf(stderr, #s "= %d at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
 #define debug_l(s) fprintf(stderr, #s "= %ld at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);

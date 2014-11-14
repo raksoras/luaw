@@ -1,5 +1,3 @@
-local lfs = require('lfs')
-
 -- Thread states
 Luaw.TS_RUNNABLE = {"RUNNABLE"}
 Luaw.TS_DONE = {"DONE"}
@@ -752,7 +750,7 @@ local timerMT = getmetatable(Luaw.newTimer())
 local waitInternal = timerMT.wait
 
 timerMT.wait = function(timer)
-    local status, elapsed = waitInternal(timer, scheduler.tid())
+    local status, elapsed = waitInternal(timer, Luaw.scheduler.tid())
     if ((status) and (not elapsed)) then
         -- timer not yet elapsed, wait for libuv on_read callback
         status, elapsed = coroutine.yield(TS_BLOCKED_EVENT)

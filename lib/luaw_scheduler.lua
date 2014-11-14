@@ -183,21 +183,24 @@ scheduler.startUserThread = function(userThreadFn, ...)
 end
 
 scheduler.join = function(...)
-    local joinedThreads = table.pack(...)
-    local numOfThreads = #joinedThreads
     local joiningTC = currentRunningThreadCtx
-    local count = 0
+    if (joininTC) then
+        local joinedThreads = table.pack(...)
+        local numOfThreads = #joinedThreads
 
-    for i, joinedTC in ipairs(joinedThreads) do
-        if ((joinedTC)and(joinedTC.state)and(joinedTC.state ~= TS_DONE)) then
-            count = count + 1
-            joinedTC.joinedBy = joiningTC
+        local count = 0
+
+        for i, joinedTC in ipairs(joinedThreads) do
+            if ((joinedTC)and(joinedTC.state)and(joinedTC.state ~= TS_DONE)) then
+                count = count + 1
+                joinedTC.joinedBy = joiningTC
+            end
         end
-    end
 
-    joiningTC.joinCount = count
-    while (joiningTC.joinCount > 0) do
-        coroutine.yield(TS_BLOCKED_THREAD)
+        joiningTC.joinCount = count
+        while (joiningTC.joinCount > 0) do
+            coroutine.yield(TS_BLOCKED_THREAD)
+        end
     end
 end
 
@@ -205,7 +208,7 @@ scheduler.runQueueSize = function()
     return runQueueLen
 end
 
-scheduler.runNextFromRunQueue = function()
+local runNextFromRunQueue = function()
     local threadCtx = runQueueHead
     if threadCtx then
         runQueueHead = threadCtx.nextThread
@@ -239,7 +242,7 @@ scheduler.runReadyThreads = function(limit)
 
     for i=1, runnableCount do
         runNextFromRunQueue()
-    end
+        end
 
     -- about to block on libuv event loop, next resumeThread should update current time
     -- as it may have spent significant time blocked on a event loop.
