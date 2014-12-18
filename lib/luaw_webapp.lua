@@ -1,5 +1,4 @@
 local Luaw = require("luaw_lib")
-local template_compiler = require ("luaw_template_compiler")
 
 local registeredWebApps = {}
 
@@ -79,6 +78,78 @@ local function findAction(method, path)
     end
 end
 
+local function renderView(req, resp, pathParams, model, view)
+    local isTagOpen = false
+    local indent = 0
+
+    local attributes = function(attrs)
+        if attrs then
+            for k,v in pairs(attrs) do
+                resp:appendBody(' ')
+                resp:appendBody(k)
+                resp:appendBody('="')
+                resp:appendBody(tostring(v))
+                resp:appendBody('"')
+            end
+        end
+    end
+
+    local BEGIN = function(tag)
+        if (isTagOpen) then
+            resp:appendBody('>\n')
+        end
+        for i=1, indent do
+            resp:appendBody(TAB)
+        end
+        resp:appendBody('<')
+        resp:appendBody(tag)
+        isTagOpen = true;
+        indent = indent+1
+        return attributes
+    end
+
+    local END = function(tag)
+        if (isTagOpen) then
+            resp:appendBody('>\n')
+            isTagOpen = false;
+        end
+
+        indent = indent - 1
+        if indent > 0 then
+            indent = indent
+        else
+            indent = 0
+        end
+        for i=1, indent do
+            resp:appendBody(TAB)
+        end
+
+        resp:appendBody('</')
+        resp:appendBody(tag)
+        resp:appendBody('>\n')
+    end
+
+    local TEXT = function(...)
+        if (isTagOpen) then
+            resp:appendBody('>\n')
+            isTagOpen = false;
+        end
+        for i=1, indent do
+            resp:appendBody(TAB)
+        end
+        local values = {...}
+        for i,v in ipairs(values) do
+            resp:appendBody(tostring(v))
+            resp:appendBody(' ')
+        end
+        resp:appendBody('\n')
+    end
+
+    -- render view
+    print(tostring(view))
+    view(req, resp, pathParams, model, BEGIN, TEXT, END)
+end
+
 local function dispatchAction(req, resp)
     assert(req, "HTTP request may not be nil")
 
@@ -120,7 +191,7 @@ local function dispatchAction(req, resp)
                 if not compiledView then
                     error("View '"..tostring(v1).."' is not defined")
                 end
-                compiledView(req, resp, pathParams, v2)
+                renderView(req, resp, pathParams, v2, compiledView)
             else
                 -- v1 is the body content itself
                 resp:appendBody(tostring(v1))
@@ -164,61 +235,70 @@ local function registerAction(webapp, method, path, action)
     route[method] = action
 end
 
-local webappMT = {}
-webappMT.__index = webappMT
-
-function webappMT.GET(webapp, path)
+function get(path)
     return function(route)
         registerAction(webapp, 'GET', path, route)
     end
 end
 
-function webappMT.POST(webapp, path)
+function post(path)
     return function(route)
         registerAction(webapp, 'POST', path, route)
     end
 end
 
-function webappMT.PUT(webapp, path)
+function put(path)
     return function(route)
         registerAction(webapp, 'PUT', path, route)
     end
 end
 
-function webappMT.DELETE(webapp, path)
+function delete(path)
     return function(route)
         registerAction(webapp, 'DELETE', path, route)
     end
 end
 
-function webappMT.HEAD(webapp, path)
+function head(path)
     return function(route)
         registerAction(webapp, 'HEAD', path, route)
     end
 end
 
-function webappMT.OPTIONS(webapp, path)
+function options(webapp, path)
     return function(route)
         registerAction(webapp, 'OPTIONS', path, route)
     end
 end
 
-function webappMT.TRACE(webapp, path)
+function trace(path)
     return function(route)
         registerAction(webapp, 'TRACE', path, route)
     end
 end
 
-function webappMT.CONNECT(webapp, path)
+function connect(path)
     return function(route)
         registerAction(webapp, 'CONNECT', path, route)
     end
 end
 
-function webappMT.SERVICE(webapp, path)
+function service(path)
     return function(route)
         registerAction(webapp, 'SERVICE', path, route)
     end
+end
+
+local function declareHTTPglobals()
+    GET = get
+    POST = post
+    PUT = put
+    DELETE = delete
+    HEAD = head
+    OPTIONS = options
+    TRACE = trace
+    CONNECT = connect
+    SERVICE = service
 end
 
 local function httpErrorHandler(req, resp, errMesg)
@@ -261,7 +341,6 @@ end
 
 local function loadWebApp(appName, appDir)
     local app = {}
-    setmetatable(app, webappMT)
 
     app.path = assert(appName, "Missing mandatory configuration property 'path'")
     app.appRoot = assert(appDir, "Missing mandatory configuration property 'root_dir'")
@@ -291,13 +370,43 @@ local function loadWebApp(appName, appDir)
     return app
 end
 
+local function loadView(viewPath, buff)
+    local firstLine = true
+    local lastLine = false
+    local viewLines = io.lines(viewPath)
+
+    return function()
+        local line = nil
+
+        if firstLine then
+            firstLine = false
+            line = "return function(req, resp, pathParams, model, BEGIN, TEXT, END)"
+        else
+            if (not lastLine) then
+                local vl = viewLines()
+                if (not vl) then
+                    lastLine = true
+                    line = "end"
+                else
+                    line = vl
+                end
+            end
+        end
+        if line then
+            table.insert(buff, line)
+            return (line .. '\n')
+        end
+    end
+end
+
 local function startWebApp(app)
     -- register resources
     local resources = app.resources
     for i,resource in ipairs(resources) do
         Luaw.formattedLine(".Loading resource "..resource)
-        -- declare global variable 'action' for the duration of the loadfile(resource)
-        action = app
+        -- declare global HTTP methods and webapp for the duration of the loadfile(resource)
+        declareHTTPglobals()
+        webapp = app
         local routeDefn = assert(loadfile(resource), string.format("Could not load resource %s", resource))
         routeDefn()
     end
@@ -309,9 +418,20 @@ local function startWebApp(app)
     local appRootLen = string.len(app.appRoot) + 1
     for i,view in ipairs(views) do
         local relativeViewPath = string.sub(view, appRootLen)
-        Luaw.formattedLine(".Compiling view "..view)
-        local compiledView = template_compiler.compileFile(view)
-        compiledViews[relativeViewPath] = compiledView
+        Luaw.formattedLine(".Loading view "..relativeViewPath)
+        local viewBuff = {}
+        local viewDefn = loadView(view, viewBuff)
+        local compiledView, errMesg = load(viewDefn, relativeViewPath)
+        if (not compiledView) then
+            Luaw.formattedLine("\nError while compiling view: "..view)
+            Luaw.formattedLine("<SOURCE>")
+            for i, line in ipairs(viewBuff) do
+                print(tostring(i)..":\t"..tostring(line))
+            end
+            Luaw.formattedLine("<SOURCE>")
+            error(errMesg)
+        end
+        compiledViews[relativeViewPath] = compiledView()
     end
     app.views = nil
     app.compiledViews = compiledViews

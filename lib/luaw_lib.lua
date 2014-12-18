@@ -752,7 +752,7 @@ local waitInternal = timerMT.wait
 timerMT.wait = function(timer)
     local status, elapsed = waitInternal(timer, Luaw.scheduler.tid())
     if ((status) and (not elapsed)) then
-        -- timer not yet elapsed, wait for libuv on_read callback
+        -- timer not yet elapsed, wait for libuv on_timeout callback
         status, elapsed = coroutine.yield(TS_BLOCKED_EVENT)
     end
     return status, elapsed

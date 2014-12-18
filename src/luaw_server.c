@@ -170,7 +170,7 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
 }
 
 void start_server(lua_State *L) {
-    fprintf(stderr, "starting server...\n");
+    fprintf(stderr, "starting server on port %d ...\n", server_port);
 
     struct sockaddr_in addr;
     int err_code = uv_ip4_addr(server_ip, server_port, &addr);

@@ -35,8 +35,8 @@ template = HTML{
                             TD{'County'},
                             TD{'Alameda'}
                         }
-                    }                    
-                },                
+                    }
+                },
                 TR{
                     TD{'State'},
                     TD{ model.state:display() }
@@ -59,5 +59,10 @@ template = HTML{
         }
     }
 }
+
+
+
+
+
 
 

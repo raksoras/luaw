@@ -1,0 +1,7 @@
+#14. Advanced Topic II - Using custom scripts on command line at start up
+
+In the last topic we saw that we can specify any custom Lua script(s) on the command line after the server configuration file at start up. All these script are executed sequentially in order by Luaw using the same Lua VM and global environment. These scripts are executed after all the core infrastructure machinery of Luaw is initialized. This means these custom scripts have full access to initialized Luaw container before it starts to server any traffic. This is a very flexible and powerful trick to customize Luaw server and modify the global environment in which all subsequent request handlers will run. We have already used this trick to override Luaw's default HTTP request handler with our own custom request handler optimized for proxying network traffic. You can use this trick to do many essential, common tasks at server start up time. For example,
+
+1. Loading any in memory caches required by application in Luaw's memory
+2. Start any crontab like tasks that you would like to be run periodically inside your Luaw server. To do this you would typically spawn a new user thread per task and use a timer:sleep() method to sleep for desired time and then execute whichever action you want in a forever loop
+3. Set up sandboxes in which to execute certain request or resource handlers.

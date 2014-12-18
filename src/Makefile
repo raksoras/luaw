@@ -1,12 +1,10 @@
-# Makefile for building Luaw
-
+# Makefile for building Luaw 
 # == CHANGE THE SETTINGS BELOW TO SUIT YOUR ENVIRONMENT =======================
 
 # Your platform. See PLATS for possible values.
 PLAT= none
-
 CC= gcc
-CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS)
+CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS) 
 LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
 LIBS= -lm -luv -llua -lpthread $(SYSLIBS) $(MYLIBS)
 
@@ -43,9 +41,7 @@ PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
 #What to install
 LUAW_BIN=luaw_server
 
-LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_template_lang.lua \
-luaw_data_structs_lib.lua luaw_lib.lua luaw_scheduler.lua luaw_template_compiler.lua \
-luaw_webapp.lua
+LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_lib.lua luaw_scheduler.lua luaw_view.lua luaw_webapp.lua
 
 LUAW_CONF=server.cfg
 
@@ -54,7 +50,7 @@ INSTALL_BIN=$(INSTALL_ROOT)/bin
 INSTALL_LIB=$(INSTALL_ROOT)/lib
 INSTALL_CONF=$(INSTALL_ROOT)/conf
 INSTALL_LOGS=$(INSTALL_ROOT)/logs
-INSTALL_WEBAPP=$(INSTALL_ROOT)/webapp
+INSTALL_WEBAPP=$(INSTALL_ROOT)/webapps
 
 CORE_O=	http_parser.o lua_lpack.o luaw_common.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
 
@@ -134,7 +130,7 @@ linux:
 	$(MAKE) $(ALL) SYSLIBS="-Wl,-E -ldl"
 
 macosx:
-	$(MAKE) $(ALL) CC=cc
+	$(MAKE) $(ALL) CC=cc $(SYSCFLAGS) $(MYCFLAGS) $(MYLDFLAGS)
 
 posix:
 	$(MAKE) $(ALL)
