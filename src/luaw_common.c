@@ -233,7 +233,7 @@ LUA_LIB_METHOD int get_hostname_lua(lua_State *L) {
 
 void close_if_active(uv_handle_t* handle, uv_close_cb close_cb) {
     if (handle != NULL) {
-        if (uv_is_active(handle)) {
+        if (handle->data != NULL) {
             uv_close(handle, close_cb);
         }
         handle->data = NULL;

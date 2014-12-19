@@ -54,6 +54,7 @@ connection_t* new_connection(lua_State* L) {
     if (!conn->write_req) goto free_write_timer;
 
     /* All allocations successfully done */
+    uv_tcp_init(uv_default_loop(), conn->handle);
     conn->handle->data = conn;
     uv_timer_init(uv_default_loop(), conn->read_timer);
     conn->read_timer->data = conn;
@@ -84,22 +85,34 @@ LUA_LIB_METHOD int new_connection_lua(lua_State* L) {
     return 1;
 }
 
-const void close_connection(connection_t* conn, const int status) {
+static void free_timer(uv_handle_t* handle) {
+	free(handle);
+}
+
+static void free_tcp_handle(uv_handle_t* handle) {
+	free(handle);
+}
+
+void close_connection(connection_t* conn, const int status) {
     /* conn->handle == NULL is a flag that declares this conn has been freed */
     if ((conn == NULL)||(conn->handle == NULL)) return;
 
     if (conn->read_buffer.base) free(conn->read_buffer.base);
     if (conn->write_buffer.base) free(conn->write_buffer.base);
 
-    close_if_active((uv_handle_t*)conn->read_timer, (uv_close_cb)free);
-    close_if_active((uv_handle_t*)conn->write_timer, (uv_close_cb)free);
-    close_if_active((uv_handle_t*)conn->handle, (uv_close_cb)free);
+    uv_timer_stop(conn->read_timer);
+    close_if_active((uv_handle_t*)conn->read_timer, (uv_close_cb)free_timer);
 
-    /* If the write_req->data is not null, write_req is in flight so do not free it */
-    if (conn->write_req->data)
-        conn->write_req->data = NULL;
-    else
+    uv_timer_stop(conn->write_timer);
+    close_if_active((uv_handle_t*)conn->write_timer, (uv_close_cb)free_timer);
+
+    close_if_active((uv_handle_t*)conn->handle, (uv_close_cb)free_tcp_handle);
+
+     conn->write_req->data = NULL;
+    /* If the conn->lua_writer_tid is not null, write_req is in flight so do not free it. on_write() will free it */
+    if  (conn->lua_writer_tid == 0) {
         free(conn->write_req);
+	}
 
     /* Mark this connection as freed */
     conn->handle = NULL;
@@ -483,14 +496,7 @@ LUA_LIB_METHOD int client_connect(lua_State* l_thread) {
     }
     connect_req->data = conn;
 
-    int status = uv_tcp_init(uv_default_loop(), conn->handle);
-    if (status) {
-        free(connect_req);
-        close_connection(conn, status);
-        return error_to_lua(l_thread, "Could not initialize memory for connection");
-    }
-
-    status = uv_tcp_connect(connect_req, conn->handle, (const struct sockaddr*) &addr, on_client_connect);
+    int status = uv_tcp_connect(connect_req, conn->handle, (const struct sockaddr*) &addr, on_client_connect);
     if (status) {
         free(connect_req);
         close_connection(conn, status);
@@ -571,13 +577,13 @@ static const struct luaL_Reg luaw_connection_methods[] = {
 	{"read", read_check},
 	{"writeBufferLength", get_write_buffer_len},
 	{"clearReadBuffer", reset_read_buffer},
-    {"clearWriteBuffer", reset_write_buffer},
+	{"clearWriteBuffer", reset_write_buffer},
 	{"appendBuffer", append_buffer},
 	{"addChunkEnvelope", add_http_chunk_envelope},
 	{"write", write_buffer},
 	{"close", close_connection_lua},
 	{"__gc", connection_gc},
-    {NULL, NULL}  /* sentinel */
+	{NULL, NULL}  /* sentinel */
 };
 
 void luaw_init_tcp_lib (lua_State *L) {

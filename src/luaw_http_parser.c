@@ -78,7 +78,8 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 	size_t length = 0;
 	const char* data = lua_tolstring(L, 2, &length);
 	char *read_ptr = (char *)data;
-	char *name, *value;
+	char *name = NULL;
+	char *value = NULL;
 	bool hex_name = false, hex_value = false;
 	int name_len = 0, value_len = 0;
 	decoder_state ds = starting_name;

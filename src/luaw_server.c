@@ -148,14 +148,6 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
     assert(lua_isfunction(l_global, -1));
 
     connection_t * conn = new_connection(l_global);
-
-    status = uv_tcp_init(server->loop, conn->handle);
-    if (status) {
-        close_connection(conn, status);
-        fprintf(stderr, "Could not initialize memory for a new connection\n");
-        return;
-    }
-
     status = uv_accept(server, (uv_stream_t*) conn->handle);
     if (status) {
         close_connection(conn, status);
@@ -224,10 +216,23 @@ static int server_loop(lua_State *L) {
     return EXIT_SUCCESS;
 }
 
+static void close_walk_cb(uv_handle_t* handle, void* arg) {
+	if (!uv_is_closing(handle)) {
+		uv_close(handle, NULL);
+	}
+}
+
+static void close_loop(uv_loop_t* loop) {
+	uv_walk(loop, close_walk_cb, NULL);
+	uv_run(loop, UV_RUN_DEFAULT);
+}
+
 static void stop_server(lua_State *L) {
     fprintf(stderr, "stopping server...\n");
     uv_close((uv_handle_t *)&server, NULL);
+	close_loop(event_loop);
     uv_stop(event_loop);
+    uv_loop_delete(event_loop); 
     lua_close(L);
 }
 
@@ -278,6 +283,7 @@ int main (int argc, char* argv[]) {
 	}
 
 	luaL_checkversion(l_global);
+
     lua_gc(l_global, LUA_GCSTOP, 0);  /* stop collector during initialization */
     luaL_openlibs(l_global);  /* open libraries */
     luaw_open_lib(l_global);
@@ -289,7 +295,8 @@ int main (int argc, char* argv[]) {
     run_lua_file(argv[1], "\ninit = require(\"luaw_init\")\n");
 
     /* run other lua on startup script passed on the command line, if any */
-    for (int i=2; i < argc; i++) {
+    int i = 2;
+    for (; i < argc; i++) {
         fprintf(stderr, "## Running %s \n", argv[i]);
         run_lua_file(argv[i], NULL);
     }

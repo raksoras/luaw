@@ -6,7 +6,7 @@ PLAT= none
 CC= gcc
 CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS) 
 LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
-LIBS= -lm -luv -llua -lpthread $(SYSLIBS) $(MYLIBS)
+LIBS= -luv -lpthread -llua -lm $(SYSLIBS) $(MYLIBS)
 
 SYSCFLAGS=
 SYSLDFLAGS=
@@ -41,7 +41,7 @@ PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
 #What to install
 LUAW_BIN=luaw_server
 
-LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_lib.lua luaw_scheduler.lua luaw_view.lua luaw_webapp.lua
+LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_lib.lua luaw_scheduler.lua luaw_webapp.lua
 
 LUAW_CONF=server.cfg
 

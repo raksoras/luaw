@@ -620,7 +620,7 @@ Luaw.newServerHttpRequest = function(conn)
 	    close = close
 	}
     assert(conn:startReading())
-	return req;
+    return req;
 end
 
 Luaw.newServerHttpResponse = function(conn)
@@ -637,10 +637,10 @@ Luaw.newServerHttpResponse = function(conn)
         startStreaming = startStreaming,
         appendBody = appendBody,
         flush = flush,
-	    reset = reset,
+        reset = reset,
         close = close
     }
-	return resp;
+    return resp;
 end
 
 local function newClientHttpResponse(conn)
@@ -659,7 +659,7 @@ local function newClientHttpResponse(conn)
 	    reset = reset,
 	    close = close
 	}
-    assert(conn:startReading())
+        assert(conn:startReading())
 	return resp;
 end
 
