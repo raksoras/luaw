@@ -234,6 +234,7 @@ static void stop_server(lua_State *L) {
     uv_stop(event_loop);
     uv_loop_delete(event_loop); 
     lua_close(L);
+	close_syslog();
 }
 
 static void run_lua_file(const char* filename, char* epilogue) {

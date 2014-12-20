@@ -164,6 +164,10 @@ LUA_LIB_METHOD static int write_log(lua_State* l_thread) {
     return 1;
 }
 
+void close_syslog() {
+	uv_freeaddrinfo(log_server_addr);
+}
+
 LUA_LIB_METHOD int connect_to_syslog(lua_State *L) {
     int rc = -1;
     int flags = 1;

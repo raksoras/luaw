@@ -43,5 +43,6 @@ extern void make_metatable(lua_State *L, const char* mt_name, const luaL_Reg* mt
 extern int luaw_open_lib (lua_State *L);
 extern void close_if_active(uv_handle_t* handle, uv_close_cb close_cb);
 extern void resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler);
+extern void close_syslog();
 
 #endif

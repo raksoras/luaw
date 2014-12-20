@@ -146,7 +146,6 @@ local function renderView(req, resp, pathParams, model, view)
     end
 
     -- render view
-    print(tostring(view))
     view(req, resp, pathParams, model, BEGIN, TEXT, END)
 end
 
@@ -322,10 +321,8 @@ local function serviceHTTP(conn)
         end
         if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then
             resp:close()
-            print('closed connection')
             break
         end
-        print('connection persistent')
     end
 end
 
