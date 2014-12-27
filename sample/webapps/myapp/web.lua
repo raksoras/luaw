@@ -1,8 +1,6 @@
 luaw_webapp = {
     resourcePattern = "handler%-.*%.lua",
-	views = {
-		"user/address-view.lua"
-	}
+    viewPattern = "view%-.*%.lua",
 }
 
 Luaw.logging.file {

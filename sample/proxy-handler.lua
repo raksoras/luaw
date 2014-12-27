@@ -1,5 +1,9 @@
 Luaw.request_handler = function(conn)
-    local req = Luaw.newServerHttpRequest(conn)
+    local status, req = pcall(Luaw.newServerHttpRequest, conn)
+    --handle persistent connection timeout
+    if not status then
+        return false
+    end
     local resp = Luaw.newServerHttpResponse(conn)
 
     local headersDone, mesgDone = false, false

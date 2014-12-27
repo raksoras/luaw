@@ -51,7 +51,12 @@ Here is the code with inline comments explaining what's going on. Our toy proxy 
 ]]
 
     Luaw.request_handler = function(conn)
-        local req = Luaw.newServerHttpRequest(conn)
+        local status, req = pcall(Luaw.newServerHttpRequest, conn)
+        -- handle persistent connection timeout gracefully
+        if not status then
+            return false
+        end
+
         local resp = Luaw.newServerHttpResponse(conn)
 
         --[[ Use streaming read and parse HTTP request function to parse incoming HTTP request as it comes in bits and pieces. It returns two flags: whether it has done parsing headers and whether it has reached end of the request. We loop waiting till it says it is done pasring headers for the reasons explained above ]]

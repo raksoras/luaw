@@ -35,6 +35,8 @@ the string 'helloworld' specifies the URL path this handler will match. It is an
 
 	Finally, the function in the above example is the actual code run whenever `/myapp/helloworld` is requested. The function is passed incoming HTTP request, HTTP response to write to and any REST path parameters defined on the resources. We will see how to used all three of these objects in subsequent chapters. For now, we just want to follow the age old rite of passage and say "Hello World!" to the browser. Simply returning the string "Hello World!" from our function is sufficient to achieve this. Later we will see more sophisticated ways of forming and returning response using response object and Luaw template views.
 
+    export LD_LIBRARY_PATH=/usr/local/lib/
+
 4. Now we are ready to start the server. To do this switch to `luaw_root_dir` and run Luaw server like this:
 		cd luaw_root_dir
 		./bin/luaw_server ./conf/server.cfg
