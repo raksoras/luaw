@@ -8,17 +8,19 @@
  and read/write buffers for the connection */
 typedef struct {
     uv_tcp_t* handle;           /* connected socket */
-    bool is_closed;             /* connection state */
 
     /* read section */
     int lua_reader_tid;         /* ID of the reading coroutine */
-    uv_buf_t read_buffer;       /* buffer to read into */
+    char* read_buffer;       	/* buffer to read into */
+	size_t read_len;			/* read length */
     size_t parse_len;           /* length of buffer parsed so far - HTTP pipelining */
     uv_timer_t* read_timer;     /* for read timeout */
 
     /* write section */
     int lua_writer_tid;         /* ID of the writing coroutine */
-    uv_buf_t write_buffer;      /* buffer to write from */
+    char* write_buffer;      	/* buffer to write from */
+	size_t write_len;			/* write length */
+	char chunk_header[16];		/* buffer to write HTTP 1.1 chunk header */
     uv_timer_t* write_timer;    /* for write/connect timeout */
     uv_write_t* write_req;      /* write request */
 } connection_t;
@@ -42,9 +44,6 @@ typedef struct {
 
 #define TO_TIMER(h) (luaw_timer_t*)h->data
 
-#define REMAINING_WRITE_BUFF_CAPACITY(connection, trailer_len) (buff_size - (connection->write_buffer.len) - (trailer_len))
-
-#define WRITE_BUFF_APPEND_DEST(connection) ((connection->write_buffer.base)+(connection->write_buffer.len))
 
 /* TCP lib methods to be exported */
 extern int new_connection_lua(lua_State* L);

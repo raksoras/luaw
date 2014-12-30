@@ -25,11 +25,13 @@ typedef enum {
 #define QUOTE(x) Q(x)
 
 
-#define step  fprintf(stderr, "At line# %d function(%s) in file %s\n", __LINE__, __FUNCTION__, __FILE__);
-#define debug_i(s) fprintf(stderr, #s "= %d at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
-#define debug_l(s) fprintf(stderr, #s "= %ld at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
-#define debug_s(s) fprintf(stderr, #s "= %s at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
-#define debug_p(s) fprintf(stderr, #s "= %p at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
+#define step  fprintf(stdout, "At line# %d function(%s) in file %s\n", __LINE__, __FUNCTION__, __FILE__);
+#define debug_i(s) fprintf(stdout, #s "= %d at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
+#define debug_l(s) fprintf(stdout, #s "= %ld at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
+#define debug_s(s) fprintf(stdout, #s "= %s at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
+#define debug_sl(s, l) fprintf(stdout, #s "= %.*s at line# %d function(%s) in file %s\n", l, s, __LINE__, __FUNCTION__, __FILE__);
+#define debug_p(s) fprintf(stdout, #s "= %p at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
+#define debug_break(s) fprintf(stdout, "%s\n", s);
 
 /* global state */
 extern lua_State* l_global;

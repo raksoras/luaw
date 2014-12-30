@@ -257,6 +257,9 @@ static int parse_http_buffer(lua_State *L) {
 
 	char* buff = PARSE_START(conn);
 	const size_t len = PARSE_LEN(conn);
+	/* every http_parser_execute() does not necessarily cause callback to be invoked, we need to know if it
+	   did call the callback */
+	lhttp_parser->http_cb = http_cb_none;
 
 	const int nparsed = http_parser_execute(parser, &parser_settings, buff, len);
 	const int remaining = len - nparsed;
@@ -270,8 +273,8 @@ static int parse_http_buffer(lua_State *L) {
     lua_pushinteger(L, lhttp_parser->http_cb);
     lua_pushinteger(L, remaining);
     int nresults = 3;
-    switch(lhttp_parser->http_cb) {
 
+    switch(lhttp_parser->http_cb) {
         case http_cb_on_headers_complete:
             lua_pushboolean(L, http_should_keep_alive(parser));
 	        lua_pushinteger(L, parser->http_major);
@@ -289,6 +292,7 @@ static int parse_http_buffer(lua_State *L) {
             nresults = 7;
             break;
 
+        case http_cb_none:
         case http_cb_on_mesg_complete:
             lua_pushboolean(L, http_should_keep_alive(parser));
             break;

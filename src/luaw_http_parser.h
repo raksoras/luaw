@@ -11,11 +11,12 @@ typedef enum {
 	in_name,
 	starting_value,
 	in_value
-} 
+}
 decoder_state;
 
 typedef enum {
-    http_cb_on_message_begin = 1,
+    http_cb_none = 1,  //Used to denote invocations of http_parser_execute() that don't cause callback
+    http_cb_on_message_begin,
     http_cb_on_status,
     http_cb_on_url,
     http_cb_on_header_field,
@@ -33,8 +34,8 @@ static const char *http_methods[] =
 #undef XX
   };
 
-#define PARSE_START(conn)  (void *)(conn->read_buffer.base + conn->parse_len)
-#define PARSE_LEN(conn)  (conn->read_buffer.len - conn->parse_len)
+#define PARSE_START(conn)  (void *)(conn->read_buffer + conn->parse_len)
+#define PARSE_LEN(conn)  (conn->read_len - conn->parse_len)
 
 typedef struct {
     http_parser parser;

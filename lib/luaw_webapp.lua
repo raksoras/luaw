@@ -146,6 +146,7 @@ local function renderView(req, resp, pathParams, model, view)
     end
 
     -- render view
+    resp:startStreaming()
     view(req, resp, pathParams, model, BEGIN, TEXT, END)
 end
 
@@ -174,7 +175,7 @@ local function dispatchAction(req, resp)
         if (type(v1) == 'number') then
             -- v1 is HTTP status
             resp:setStatus(v1)
-            resp:startStreaming()
+            --resp:startStreaming()
             if v2 then
                 -- v2 is body content
                 resp:appendBody(tostring(v2))
@@ -183,7 +184,7 @@ local function dispatchAction(req, resp)
             if not resp.statusCode then
                 resp:setStatus(200)
             end
-            resp:startStreaming()
+            --resp:startStreaming()
             if ((type(v1) == 'string')and(v2)) then
                 -- v1 is view path, v2 is view model
                 local compiledView = webApp.compiledViews[v1]
