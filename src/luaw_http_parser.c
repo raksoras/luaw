@@ -253,7 +253,7 @@ static int parse_http_buffer(lua_State *L) {
     lua_settop(L, 2);
 	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
 	http_parser* parser = &lhttp_parser->parser;
-	connection_t* conn = luaL_checkudata(L, 2, LUA_CONNECTION_META_TABLE);
+    LUA_GET_CONN_OR_ERROR(L, 2, conn);
 
 	char* buff = PARSE_START(conn);
 	const size_t len = PARSE_LEN(conn);

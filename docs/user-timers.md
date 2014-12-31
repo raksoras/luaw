@@ -9,6 +9,9 @@ doSomeStuff()
 print("waiting till it's time...")
 timer:wait()
 print('done waiting!')
+-- call timer: delete() to free timer resources immediately. If not delete() is not called
+-- timer resources hang around till Lua's VM garbage collects them
+timer:delete()
 ```
 
 1. You create a new timer using Luaw.newTimer()

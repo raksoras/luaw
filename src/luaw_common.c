@@ -16,7 +16,6 @@
 
 /* globals */
 lua_State* l_global = NULL; //main global Lua state that spawns all other coroutines
-int buff_size = 4096;       //default connection buffer size
 int resume_thread_fn_ref;   //Resume thread lua function
 
 
@@ -236,12 +235,8 @@ LUA_LIB_METHOD int get_hostname_lua(lua_State *L) {
 }
 
 void close_if_active(uv_handle_t* handle, uv_close_cb close_cb) {
-    if (handle != NULL) {
-        if (handle->data != NULL) {
-            uv_close(handle, close_cb);
-        	handle->data = NULL;
-        }
-		//else DECR_REF
+    if ((handle != NULL)&&(!uv_is_closing(handle))) {
+        uv_close(handle, close_cb);
     }
 }
 

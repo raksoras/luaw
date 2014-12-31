@@ -22,7 +22,6 @@ static int server_port = 80;
 static uv_tcp_t server;
 static uv_loop_t* event_loop;
 static uv_signal_t shutdown_signal;
-static int is_live = 1;
 
 static int service_http_fn_ref;
 static int start_thread_fn_ref;
@@ -36,6 +35,7 @@ typedef struct {
     char* epilogue;
 } lua_load_buffer_t;
 
+uv_prepare_t user_thread_runner;
 
 static const char* lua_file_reader(lua_State* L, void* data, size_t* size) {
     lua_load_buffer_t *lb = (lua_load_buffer_t*)data;
@@ -56,11 +56,10 @@ static const char* lua_file_reader(lua_State* L, void* data, size_t* size) {
 static void handle_shutdown_req(uv_signal_t* handle, int signum) {
     if (signum == SIGHUP) {
         fprintf(stderr, "shutdown request received\n");
-        is_live = 0;
         uv_signal_stop(handle);
+        uv_stop(event_loop);
     }
 }
-
 
 void init_luaw_server(lua_State* L) {
     lua_getglobal(L, "Luaw");
@@ -120,12 +119,6 @@ void init_luaw_server(lua_State* L) {
             lua_pop(L, 1);
         }
 
-        lua_getfield(L, -1, "connection_buffer_size");
-        if (lua_isnumber(L, -1)) {
-            buff_size = lua_tointeger(L, -1);
-            lua_pop(L, 1);
-        }
-
         lua_pop(L, 1);
     }
 
@@ -148,7 +141,7 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
     assert(lua_isfunction(l_global, -1));
 
     connection_t * conn = new_connection(l_global);
-    status = uv_accept(server, (uv_stream_t*) conn->handle);
+    status = uv_accept(server, (uv_stream_t*)&conn->handle);
     if (status) {
         close_connection(conn, status);
         fprintf(stderr, "500 Error accepting incoming conn: %s\n", uv_strerror(status));
@@ -157,7 +150,7 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
 
     status = lua_pcall(l_global, 2, 2, 0);
     if (status) {
-        fprintf(stderr, "******** Error starting new client connect thread: %s (%d) *********\n", lua_tostring(l_global, -1), status);
+        fprintf(stderr, "**** Error starting new client connect thread: %s (%d) ****\n", lua_tostring(l_global, -1), status);
     }
 }
 
@@ -189,31 +182,17 @@ void start_server(lua_State *L) {
     uv_signal_start(&shutdown_signal, handle_shutdown_req, SIGHUP);
 }
 
-static int event_loop_once() {
-    int status = uv_run(event_loop, UV_RUN_ONCE);
-    return status;
-}
+static void run_user_threads(uv_prepare_t* handle) {
+    /* do the bottom half processing, run ready user threads that are waiting */
+    lua_rawgeti(l_global, LUA_REGISTRYINDEX, run_ready_threads_fn_ref);
+    int status = lua_pcall(l_global, 0, 1, 0);
 
-static int server_loop(lua_State *L) {
-    int status = 0;
-    while (is_live) {
-        lua_settop(L, 0);
-
-        status = event_loop_once();
-        if (status == 0) {
-            fprintf(stderr,"Error while running event loop: %s\n", uv_strerror(status));
-            return EXIT_FAILURE;
-        }
-
-        /* do the bottom half processing, run ready threads that are waiting */
-        lua_rawgeti(L, LUA_REGISTRYINDEX, run_ready_threads_fn_ref);
-        status = lua_pcall(L, 0, 1, 0);
-        if (status != LUA_OK) {
-            fprintf(stderr,"Error while running ready threads for bottom half processing: %s\n", lua_tostring(L, -1));
-            return EXIT_FAILURE;
-        }
+    if (status != LUA_OK) {
+        fprintf(stderr,"Error while running user threads for bottom half processing: %s\n", lua_tostring(l_global, -1));
+        uv_stop(event_loop);
     }
-    return EXIT_SUCCESS;
+
+    lua_settop(l_global, 0);
 }
 
 static void close_walk_cb(uv_handle_t* handle, void* arg) {
@@ -222,19 +201,20 @@ static void close_walk_cb(uv_handle_t* handle, void* arg) {
 	}
 }
 
-static void close_loop(uv_loop_t* loop) {
-	uv_walk(loop, close_walk_cb, NULL);
-	uv_run(loop, UV_RUN_DEFAULT);
-}
+static int server_loop(lua_State *L) {
+    uv_prepare_init(event_loop, &user_thread_runner);
+    uv_prepare_start(&user_thread_runner, run_user_threads);
 
-static void stop_server(lua_State *L) {
-    fprintf(stderr, "stopping server...\n");
-    uv_close((uv_handle_t *)&server, NULL);
-	close_loop(event_loop);
-    uv_stop(event_loop);
-    uv_loop_delete(event_loop); 
+    int status = uv_run(event_loop, UV_RUN_DEFAULT);
+
+    /* clean up resources used by the event loop and Lua */
+    uv_walk(event_loop, close_walk_cb, NULL);
+    uv_run(event_loop, UV_RUN_ONCE);
+    uv_loop_delete(event_loop);
     lua_close(L);
 	close_syslog();
+
+    return status;
 }
 
 static void run_lua_file(const char* filename, char* epilogue) {
@@ -305,7 +285,6 @@ int main (int argc, char* argv[]) {
     init_luaw_server(l_global);
     start_server(l_global);
     int status = server_loop(l_global);
-    stop_server(l_global);
 
     exit(status);
 }

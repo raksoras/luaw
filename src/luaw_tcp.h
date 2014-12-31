@@ -3,29 +3,34 @@
 #define LUAW_TCP_H
 
 #define LUA_CONNECTION_META_TABLE "_luaw_connection_MT_"
+#define CONN_BUFFER_SIZE 4096
+
+typedef struct connection_s connection_t;
 
 /* client connection's state: socket connection, coroutines servicing the connection
  and read/write buffers for the connection */
-typedef struct {
-    uv_tcp_t* handle;           /* connected socket */
+struct connection_s {
+    uv_tcp_t handle;                        /* connected socket */
 
     /* read section */
-    int lua_reader_tid;         /* ID of the reading coroutine */
-    char* read_buffer;       	/* buffer to read into */
-	size_t read_len;			/* read length */
-    size_t parse_len;           /* length of buffer parsed so far - HTTP pipelining */
-    uv_timer_t* read_timer;     /* for read timeout */
+    int lua_reader_tid;                     /* ID of the reading coroutine */
+    char read_buffer[CONN_BUFFER_SIZE];     /* buffer to read into */
+	size_t read_len;			            /* read length */
+    size_t parse_len;                       /* length of buffer parsed so far - HTTP pipelining */
+    uv_timer_t read_timer;                  /* for read timeout */
 
     /* write section */
-    int lua_writer_tid;         /* ID of the writing coroutine */
-    char* write_buffer;      	/* buffer to write from */
-	size_t write_len;			/* write length */
-	char chunk_header[16];		/* buffer to write HTTP 1.1 chunk header */
-    uv_timer_t* write_timer;    /* for write/connect timeout */
-    uv_write_t* write_req;      /* write request */
-} connection_t;
+    int lua_writer_tid;                     /* ID of the writing coroutine */
+    char write_buffer[CONN_BUFFER_SIZE];    /* buffer to write from */
+	size_t write_len;			            /* write length */
+	char chunk_header[16];		            /* buffer to write HTTP 1.1 chunk header */
+    uv_timer_t write_timer;                 /* for write/connect timeout */
+    uv_write_t write_req;                   /* write request */
 
-#define CHUNK_HEADER_LEN 6 //4 hex digits for chunk sizes up to 64K + 2 for \r\n
+    /* memory management */
+    int ref_count;                          /* reference count */
+    connection_t** lua_ref;                 /* back reference to Lua's full userdata pointing to this conn */
+};
 
 #define MAX_CONNECTION_BUFF_SIZE 65536  //16^4
 
@@ -35,12 +40,17 @@ typedef struct {
     (connection_t*)h->data;     \
     if(!h->data) return
 
-#define LUA_GET_CONN(L, i) luaL_checkudata(L, i, LUA_CONNECTION_META_TABLE)
+#define LUA_GET_CONN_OR_RETURN(L, i, c)                                     \
+    connection_t** cr = luaL_checkudata(L, i, LUA_CONNECTION_META_TABLE);   \
+    if (cr == NULL) return 0;                                               \
+    connection_t* c = *cr;                                                  \
+    if (c == NULL) return 0;
 
 #define LUA_GET_CONN_OR_ERROR(L, i, c)                                      \
-    connection_t* c = luaL_checkudata(L, i, LUA_CONNECTION_META_TABLE);     \
-    if (!c) return error_to_lua(L, "Connection missing");                   \
-    if (!c->handle) return error_to_lua(L, "Connection closed");
+    connection_t** cr = luaL_checkudata(L, i, LUA_CONNECTION_META_TABLE);   \
+    if (cr == NULL) return error_to_lua(L, "Connection missing");           \
+    connection_t* c = *cr;                                                  \
+    if (c == NULL) return error_to_lua(L, "Connection closed");
 
 #define TO_TIMER(h) (luaw_timer_t*)h->data
 

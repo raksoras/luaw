@@ -24,6 +24,16 @@ typedef enum {
 #define Q(x) #x
 #define QUOTE(x) Q(x)
 
+#define INCR_REF_COUNT(s) if (s != NULL) s->ref_count++;
+
+#define DECR_REF_COUNT(s) if (s != NULL) s->ref_count--;
+
+#define GC_REF(s)                           \
+    if (s != NULL) {                        \
+        s->ref_count--;                     \
+        if (s->ref_count <= 0) {debug_i(s->ref_count); free(s);}     \
+    }
+
 
 #define step  fprintf(stdout, "At line# %d function(%s) in file %s\n", __LINE__, __FUNCTION__, __FILE__);
 #define debug_i(s) fprintf(stdout, #s "= %d at line# %d function(%s) in file %s\n", s, __LINE__, __FUNCTION__, __FILE__);
@@ -35,8 +45,6 @@ typedef enum {
 
 /* global state */
 extern lua_State* l_global;
-extern lua_State* l_global ;
-extern int buff_size;
 extern int resume_thread_fn_ref;
 
 extern int error_to_lua(lua_State* L, const char* fmt, ...);
