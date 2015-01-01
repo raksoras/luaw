@@ -31,7 +31,7 @@ typedef enum {
 #define GC_REF(s)                           \
     if (s != NULL) {                        \
         s->ref_count--;                     \
-        if (s->ref_count <= 0) {debug_i(s->ref_count); free(s);}     \
+        if (s->ref_count <= 0) free(s);     \
     }
 
 

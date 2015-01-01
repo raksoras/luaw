@@ -458,7 +458,7 @@ end
 
 local function writeHeader(conn, writeTimeout, name, value)
     bufferAndWrite(tostring(name), conn, writeTimeout, false, false)
-    bufferAndWrite(":", conn, writeTimeout, false, false)
+    bufferAndWrite(": ", conn, writeTimeout, false, false)
     bufferAndWrite(tostring(value), conn, writeTimeout, false, false)
     bufferAndWrite(CRLF, conn, writeTimeout, false, false)
 end

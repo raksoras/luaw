@@ -165,7 +165,9 @@ local function dispatchAction(req, resp)
     assert(action, "No action found for path "..parsedURL.path.." for method "..req.method)
 
     if req:shouldCloseConnection() then
-        resp:addHeader('Connection', 'close')
+        resp.headers['Connection'] = 'close'
+    else
+        resp.headers['Connection'] = 'Keep-Alive'
     end
 
     v1, v2 = action.action(req, resp, pathParams)
