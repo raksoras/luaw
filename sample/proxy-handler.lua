@@ -1,64 +1,54 @@
 Luaw.request_handler = function(conn)
-    local status, req = pcall(Luaw.newServerHttpRequest, conn)
-    --handle persistent connection timeout
-    if not status then
-        return false
-    end
-    local resp = Luaw.newServerHttpResponse(conn)
+    assert(conn:startReading())
 
-    local headersDone, mesgDone = false, false
-    while (not headersDone) do
-        headersDone, mesgDone = req:readAndParse()
-    end
+    -- loop to support HTTP 1.1 persistent (keep-alive) connections
+    while true do
+	    conn:startReading()
+		local resp = Luaw.newServerHttpResponse(conn)
+        local req = Luaw.newServerHttpRequest(conn)
 
-    local proxyHost = req.headers['proxy-host']
-    local proxyURL = req.headers['proxy-url']
+        -- read and parse full request
+print("\n\nbefore readfull")
+        req:readFull() -- read and parse full request
+print("after readFull")
+    	local backendHost = req.headers['backend-host']
+    	local backendURL = req.headers['backend-url']
 
-    if ((proxyHost)and(proxyURL)) then
-        --[[ Create a new Luaw async HTTP client request ]]
-        local proxyReq = Luaw.newClientHttpRequest()
-        proxyReq.hostName = proxyHost
-        proxyReq.url = proxyURL
-        proxyReq.method = 'GET'
-        proxyReq.headers = { Host = proxyHost }
+    	if ((backendHost)and(backendURL)) then
+       		 --[[ Create a new Luaw HTTP client request ]]
+        	local backendReq = Luaw.newClientHttpRequest()
+        	backendReq.hostName = backendHost
+        	backendReq.url = backendURL
+        	backendReq.method = 'GET'
+        	backendReq.headers = { Host = backendHost }
+print("before execute")
+			local backendResp = backendReq:execute()
+print("after execute")
 
-        local proxyResp = proxyReq:connect()
-        proxyReq:flush()
+        	--[[Send the HTTP status returned by the backend server back to the client, along with other response headers.]]
+        	resp:setStatus(backendResp.status)
+        	local backendHeaders = backendResp.headers
+        	for k,v in pairs(backendHeaders) do
+           		if ((k ~= 'Transfer-Encoding')and(k ~= 'Content-Length')) then
+                	resp:addHeader(k,v)
+            	end
+        	end
+print("#body="..#backendResp.body)
+			resp:appendBody(backendResp.body)
+   	 		backendResp:close()
+    	else
+        	resp:setStatus(400)
+        	resp:appendBody("Headers backend-host and backend-url must be present")
+    	end
 
-        local proxyHeadersDone, proxyMesgDone, prxoyBody = false, false, nil
-        while not proxyHeadersDone do
-            proxyHeadersDone, proxyMesgDone, prxoyBody = proxyResp:readStreaming()
-        end
-
-        --[[Send the HTTP status returned by the backend server back to the client, along with other response headers.]]
-        resp:setStatus(proxyResp.status)
-        local proxyHeaders = proxyResp.headers
-        for k,v in pairs(proxyHeaders) do
-            if (k ~= 'Transfer-Encoding') then
-                resp:addHeader(k,v)
-            end
-        end
-
-        resp:startStreaming()
-
-
-        while true do
-            if prxoyBody then
-                resp:appendBody(prxoyBody)
-            end
-            if proxyMesgDone then
-                break
-            end
-            proxyHeadersDone, proxyMesgDone, prxoyBody = proxyResp:readStreaming()
-        end
-
-    else
-        resp:setStatus(400)
-        resp:appendBody("Headers proxy-host and proxy-url must be present")
-    end
-
-    resp:flush()
-    proxyResp:close()
-    req:close()
-    resp:close()
+print("before flush")
+		resp:flush()
+print("after flush")
+       	if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then
+           	resp:close()
+			req:close()
+       		break
+       	end
+	end
+print("Closed connection!!!!")
 end
