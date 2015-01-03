@@ -146,14 +146,14 @@ local function renderView(req, resp, pathParams, model, view)
     end
 
     -- render view
-    resp:startStreaming()
+    if ((req.major_version >= 1)and(req.minor_version >= 1)) then
+        resp:startStreaming()
+    end
     view(req, resp, pathParams, model, BEGIN, TEXT, END)
 end
 
 local function dispatchAction(req, resp)
     assert(req, "HTTP request may not be nil")
-
-    req:readFull() -- read and parse full request
     local parsedURL = req:getParsedURL()
 
     if not(req.method and  parsedURL) then
@@ -317,7 +317,9 @@ local function serviceHTTP(conn)
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do
         local req = Luaw.newServerHttpRequest(conn)
+        req:readFull() -- read and parse full request
         local resp = Luaw.newServerHttpResponse(conn)
+
         local status, errMesg = pcall(dispatchAction, req, resp)
         if (not status) then
             httpErrorHandler(req, resp, errMesg)
