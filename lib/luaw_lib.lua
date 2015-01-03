@@ -632,7 +632,6 @@ Luaw.newServerHttpRequest = function(conn)
 	    reset = reset,
 	    close = close
 	}
-    assert(conn:startReading())
     return req;
 end
 
@@ -674,7 +673,6 @@ local function newClientHttpResponse(conn)
 	    reset = reset,
 	    close = close
 	}
-        assert(conn:startReading())
 	return resp;
 end
 
@@ -719,6 +717,7 @@ end
 
 local function connectReq(req)
     conn = assert(connect(req))
+    assert(conn:startReading())
     req.luaw_conn = conn
     local resp = newClientHttpResponse(conn)
     resp.readTimeout = req.readTimeout

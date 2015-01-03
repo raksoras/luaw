@@ -314,6 +314,7 @@ local function httpErrorHandler(req, resp, errMesg)
 end
 
 local function serviceHTTP(conn)
+    assert(conn:startReading())
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do
         local req = Luaw.newServerHttpRequest(conn)
