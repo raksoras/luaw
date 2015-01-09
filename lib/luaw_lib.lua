@@ -558,7 +558,7 @@ local function writeFullBody(resp)
         end
     end
 
-    appendBody(resp, CRLF)
+    --appendBody(resp, CRLF)
     resp:addHeader('Content-Length', resp.contentLength)
 
     bufferAndWrite(resp:firstLine(), conn, writeTimeout, false, false)
@@ -655,7 +655,7 @@ Luaw.newServerHttpRequest = function(conn)
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
 	    headers = {},
-	    bodyParts = {},
+		bodyParts = {},
 	    luaw_parser = Luaw:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -699,7 +699,7 @@ local function newClientHttpResponse(conn)
 	    luaw_mesg_type = 'cresp',
 	    luaw_conn = conn,
 	    headers = {},
-	    bodyParts = {},
+		bodyParts = {},
 	    luaw_parser = Luaw:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -775,9 +775,9 @@ Luaw.newClientHttpRequest = function()
         major_version = 1,
         minor_version = 1,
         method = 'GET',
-	    contentLength = 0,
+        contentLength = 0,
         headers = {},
-        bodyParts = {},
+		bodyParts = {},
         addHeader = addHeader,
         connect = connectReq,
         execute = execute,
