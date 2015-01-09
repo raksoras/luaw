@@ -256,7 +256,6 @@ static const struct luaL_Reg luaw_lib[] = {
 	{"newHttpRequestParser", luaw_new_http_request_parser},
 	{"newHttpResponseParser", luaw_new_http_response_parser},
 	{"parseURL", luaw_parse_url},
-	{"toHttpError", luaw_to_http_error},
 	{"newConnection", new_connection_lua},
 	{"connect", client_connect},
 	{"resolveDNS", dns_resolve},

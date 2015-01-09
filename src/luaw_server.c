@@ -130,7 +130,7 @@ void init_luaw_server(lua_State* L) {
 */
 LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
     if (status) {
-        raise_lua_error(l_global, "500 Error in on_server_connect callback: %s\n", uv_strerror(status));
+        raise_lua_error(l_global, "Error in on_server_connect callback: %s\n", uv_strerror(status));
         return;
     }
 
@@ -144,7 +144,7 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
     status = uv_accept(server, (uv_stream_t*)&conn->handle);
     if (status) {
         close_connection(conn, status);
-        fprintf(stderr, "500 Error accepting incoming conn: %s\n", uv_strerror(status));
+        fprintf(stderr, "Error accepting incoming conn: %s\n", uv_strerror(status));
         return;
     }
 

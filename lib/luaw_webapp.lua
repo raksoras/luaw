@@ -303,31 +303,36 @@ local function declareHTTPglobals()
     SERVICE = service
 end
 
-local function httpErrorHandler(req, resp, errMesg)
-    print(errMesg)
-    local httpCode, httpMesg = Luaw.toHttpError(errMesg)
-    if (httpCode == 0) then httpCode = 500 end
-    resp:setStatus(httpCode)
-    resp:addHeader('Connection', 'close')
-    resp:appendBody(httpMesg)
-    resp:flush()
-end
-
 local function serviceHTTP(conn)
-    assert(conn:startReading())
+    conn:startReading()
+
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do
         local req = Luaw.newServerHttpRequest(conn)
-        req:readFull() -- read and parse full request
-        local resp = Luaw.newServerHttpResponse(conn)
 
-        local status, errMesg = pcall(dispatchAction, req, resp)
-        if (not status) then
-            httpErrorHandler(req, resp, errMesg)
+        -- read and parse full request
+        local eof = req:readFull()
+        if (eof) then
+            conn:close()
+            return "connection reset by peer"
         end
+
+        local resp = Luaw.newServerHttpResponse(conn)
+        local status, errMesg = pcall(dispatchAction, req, resp)
+
+        if (not status) then
+            -- send HTTP error response
+            resp:setStatus(500)
+            resp:addHeader('Connection', 'close')
+            pcall(resp.appendBody, resp, errMesg)
+            pcall(resp.flush, resp)
+            conn:close()
+            error(errMesg)
+        end
+
         if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then
-            resp:close()
-            break
+            conn:close()
+            return "connection reset by peer"
         end
     end
 end

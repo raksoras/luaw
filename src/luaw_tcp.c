@@ -172,14 +172,23 @@ LUA_OBJ_METHOD static int reset_write_buffer(lua_State* l_thread) {
 
 LUA_OBJ_METHOD static int close_connection_lua(lua_State* l_thread) {
     LUA_GET_CONN_OR_RETURN(l_thread, 1, conn);
-    close_connection(conn, UV_ECANCELED);
+
+    /* being called from lua, no reason to resume thread */
+    conn->lua_reader_tid = 0;
+    conn->lua_writer_tid = 0;
+    close_connection(conn, UV_EOF);
     return 0;
 }
 
 LUA_OBJ_METHOD static int connection_gc(lua_State *L) {
     LUA_GET_CONN_OR_RETURN(L, 1, conn);
+
     /* if we reached here, there is a connection that has not been closed */
-    fprintf(stderr, "Luaw salvaging possible resource leak, connection not properly closed\n");
+    fprintf(stderr, "Luaw closed unclosed connection\n");
+
+    /* being called from lua, no reason to resume thread */
+    conn->lua_reader_tid = 0;
+    conn->lua_writer_tid = 0;
     close_connection(conn, UV_ECANCELED);
     return 0;
 }
@@ -266,6 +275,7 @@ LUA_OBJ_METHOD static int read_check(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
 
     if (!uv_is_active((uv_handle_t*)&conn->handle)) {
+        close_connection(conn, UV_EAI_BADFLAGS);
        return error_to_lua(l_thread, "read() called on conn that is not registered to receive read events");
     }
 
@@ -304,7 +314,6 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
         req->data = NULL;
         if (status) {
             close_connection(conn, status);
-
         } else {
             stop_timer(&conn->write_timer); //clear write timeout if any
             lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
@@ -333,7 +342,7 @@ LUA_OBJ_METHOD static int write_buffer(lua_State* l_thread) {
         /* non empty write buffer. Send write request, record writer tid and block in lua */
         int lua_writer_tid = lua_tointeger(l_thread, 2);
         if (lua_writer_tid == 0) {
-            return error_to_lua(l_thread, "500 write() specified invalid thread id");
+            return error_to_lua(l_thread, "write() specified invalid thread id");
         }
 
         int writeTimeout = lua_tointeger(l_thread, 3);
@@ -423,7 +432,6 @@ LIBUV_CALLBACK static void on_client_connect(uv_connect_t* connect_req, int stat
     lua_pushinteger(l_global, conn->lua_writer_tid);
 
     if (status) {
-        conn->lua_writer_tid = 0;
         close_connection(conn, status);
         lua_pushboolean(l_global, 0);
         lua_pushstring(l_global, uv_strerror(status));
@@ -464,6 +472,7 @@ LUA_LIB_METHOD int client_connect(lua_State* l_thread) {
 
     uv_connect_t* connect_req = (uv_connect_t*)malloc(sizeof(uv_connect_t));
     if (connect_req == NULL) {
+        close_connection(conn, UV_ENOMEM);
         return error_to_lua(l_thread, "Could not allocate memory for connect request");
     }
     connect_req->data = conn;

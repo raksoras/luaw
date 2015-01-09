@@ -53,7 +53,7 @@ static int handle_name_value_pair(lua_State* L, const char* name, int name_len, 
 
 		lua_getfield(L, 1, "storeHttpParam");
 		if (lua_isfunction(L, -1) != 1) {
-			raise_lua_error(L, "500 Missing lua function storeHttpParam()");
+			raise_lua_error(L, "Missing lua function storeHttpParam()");
         }
 		lua_pushvalue(L, 3);
 		lua_pushlstring(L, name, name_len);
@@ -73,7 +73,7 @@ static int handle_name_value_pair(lua_State* L, const char* name, int name_len, 
 */
 LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 	if (!lua_istable(L, 1)) {
-		return raise_lua_error(L, "500 Lua HTTP lib table is missing");
+		return raise_lua_error(L, "Lua HTTP lib table is missing");
 	}
 	size_t length = 0;
 	const char* data = lua_tolstring(L, 2, &length);
@@ -158,7 +158,7 @@ LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
 static int new_lhttp_parser(lua_State *L, enum http_parser_type parser_type) {
 	luaw_http_parser_t* lhttp_parser = lua_newuserdata(L, sizeof(luaw_http_parser_t));
 	if (lhttp_parser == NULL) {
-		return raise_lua_error(L, "500 Failed to allocate memory for new http_parser.");
+		return raise_lua_error(L, "Failed to allocate memory for new http_parser.");
 	}
 	luaL_setmetatable(L, LUA_HTTP_PARSER_META_TABLE);
 	http_parser_init(&lhttp_parser->parser, parser_type);
@@ -334,7 +334,7 @@ LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
 
 	struct http_parser_url* parsed_url = (struct http_parser_url*) malloc(sizeof(struct http_parser_url));
 	if (parsed_url == NULL) {
-		return raise_lua_error(L, "500 Could not allocate memory for URL struct");
+		return raise_lua_error(L, "Could not allocate memory for URL struct");
 	}
 
 	int result = http_parser_parse_url(buff, len, is_connect, parsed_url);
@@ -355,16 +355,6 @@ LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
 	free(parsed_url);
 	return 1;
 }
-
-LUA_LIB_METHOD int luaw_to_http_error(lua_State *L) {
-    const char* err = luaL_checkstring(L, -1);
-    char* err_mesg;
-    int err_code = strtol(err, &err_mesg, 10);
-    lua_pushinteger(L, err_code);
-    lua_pushstring(L, err_mesg);
-    return 2;
-}
-
 
 static const struct luaL_Reg http_parser_methods[] = {
 	{"parseHttpBuffer", parse_http_buffer},

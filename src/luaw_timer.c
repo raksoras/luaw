@@ -21,6 +21,45 @@ static void clear_user_timer(luaw_timer_t* timer) {
     timer->lua_tid = 0;
 }
 
+static void free_user_timer(uv_handle_t* handle) {
+    luaw_timer_t* timer = GET_TIMER_OR_RETURN(handle);
+    handle->data = NULL;
+    GC_REF(timer)
+}
+
+void close_timer(luaw_timer_t* timer) {
+    /* timer->lua_ref == NULL also acts as a flag to mark that this timer has been closed */
+    if ((timer == NULL)||(timer->lua_ref == NULL)) return;
+
+    *(timer->lua_ref) = NULL;  //delink from Lua's userdata
+    timer->lua_ref = NULL;
+    DECR_REF_COUNT(timer);
+
+    /* unblock waiting thread */
+    if (timer->lua_tid) {
+        lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
+        lua_pushinteger(l_global, timer->lua_tid);
+        lua_pushboolean(l_global, 0);                           //status
+        lua_pushstring(l_global, uv_strerror(UV_ECANCELED));    //error message
+        timer->lua_tid = 0;
+        resume_lua_thread(l_global, 3, 2, 0);
+    }
+
+    close_if_active((uv_handle_t*)&timer->handle, free_user_timer);
+}
+
+LUA_OBJ_METHOD static int close_timer_lua(lua_State* l_thread) {
+    LUA_GET_TIMER_OR_RETURN(l_thread, 1, timer);
+    close_timer(timer);
+    return 0;
+}
+
+LUA_OBJ_METHOD static int timer_gc(lua_State *L) {
+    LUA_GET_TIMER_OR_RETURN(L, 1, timer);
+    close_timer(timer);
+    return 0;
+}
+
 int new_user_timer(lua_State* l_thread) {
     luaw_timer_t* timer = (luaw_timer_t*)calloc(1, sizeof(luaw_timer_t));
     if (timer == NULL) {
@@ -86,6 +125,7 @@ static int start_user_timer(lua_State* l_thread) {
 
     int rc = uv_timer_start(&timer->handle, on_user_timer_timeout, timeout, 0);
     if (rc) {
+        close_timer(timer);
         return error_to_lua(l_thread, "Error starting timer: %s", uv_strerror(rc));
     }
 
@@ -142,45 +182,6 @@ static int stop_user_timer(lua_State* l_thread) {
     return 0;
 }
 
-static void free_user_timer(uv_handle_t* handle) {
-    luaw_timer_t* timer = GET_TIMER_OR_RETURN(handle);
-    handle->data = NULL;
-    GC_REF(timer)
-}
-
-void close_timer(luaw_timer_t* timer) {
-    /* timer->lua_ref == NULL also acts as a flag to mark that this timer has been closed */
-    if ((timer == NULL)||(timer->lua_ref == NULL)) return;
-
-    *(timer->lua_ref) = NULL;  //delink from Lua's userdata
-    timer->lua_ref = NULL;
-    DECR_REF_COUNT(timer);
-
-    /* unblock waiting thread */
-    if (timer->lua_tid) {
-        lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
-        lua_pushinteger(l_global, timer->lua_tid);
-        lua_pushboolean(l_global, 0);                           //status
-        lua_pushstring(l_global, uv_strerror(UV_ECANCELED));    //error message
-        timer->lua_tid = 0;
-        resume_lua_thread(l_global, 3, 2, 0);
-    }
-
-
-    close_if_active((uv_handle_t*)&timer->handle, free_user_timer);
-}
-
-LUA_OBJ_METHOD static int close_timer_lua(lua_State* l_thread) {
-    LUA_GET_TIMER_OR_RETURN(l_thread, 1, timer);
-    close_timer(timer);
-    return 0;
-}
-
-LUA_OBJ_METHOD static int timer_gc(lua_State *L) {
-    LUA_GET_TIMER_OR_RETURN(L, 1, timer);
-    close_timer(timer);
-    return 0;
-}
 
 static const struct luaL_Reg luaw_user_timer_methods[] = {
 	{"start", start_user_timer},
@@ -190,7 +191,6 @@ static const struct luaL_Reg luaw_user_timer_methods[] = {
 	{"__gc", timer_gc},
 	{NULL, NULL}  /* sentinel */
 };
-
 
 void luaw_init_timer_lib (lua_State *L) {
 	make_metatable(L, LUA_USER_TIMER_META_TABLE, luaw_user_timer_methods);

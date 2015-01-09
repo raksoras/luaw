@@ -128,7 +128,6 @@ local function resumeThread(threadCtx, ...)
     if not status then
         -- thread ran into error
         print("Error: "..tostring(state))
-        print(debug.traceback())
         state = END_OF_THREAD
         -- thread has blown its stack so let it get garbage collected
         t = nil

@@ -37,6 +37,35 @@ function debugDump (tbl, indent, tab)
 	print(string.rep(tab, indent) .. "}")
 end
 
+function steplight(mesg)
+    local tid = tostring(Luaw.scheduler.tid())
+    print("Thread-"..tid.."> "..tostring(mesg))
+end
+
+function step(mesg, level)
+    local tid = tostring(Luaw.scheduler.tid())
+
+    local lvl = level or 2
+    if (lvl < 0) then lvl = lvl * -1 end
+
+    local dc = debug.getinfo(lvl, "nSl")
+
+    local str = ""
+    if type(mesg) == 'table' then
+        for k,v in pairs(mesg) do
+            str = str..", "..tostring(k).."="..tostring(v)
+        end
+    else
+        str = tostring(mesg)
+    end
+
+    print('Thread '..tid..'> line# '..tostring(dc.linedefined)..' in function '..tostring(dc.name)..' in file '..tostring(dc.source)..': '..str)
+
+    if ((level)and(level < 0)) then
+        print(debug.traceback())
+    end
+end
+
 local http_status_codes = {
     [100] = "Continue",
     [101] = "Switching Protocols",
@@ -80,7 +109,7 @@ local http_status_codes = {
 }
 
 setmetatable(http_status_codes, {
-    __index = function(statusCode)
+    __index = function(status)
         return "User Defined Status"
     end
 })
@@ -199,12 +228,8 @@ local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, h
 end
 
 local function onBody(req, cbtype, remaining, chunk)
-    local bodyChunks = rawget(req, 'bodyChunks')
-    if not bodyChunks then
-        bodyChunks = {}
-        req.bodyChunks = bodyChunks
-    end
-    table.insert(bodyChunks, chunk)
+    local bodyParts = rawget(req, 'bodyParts')
+    table.insert(bodyParts, chunk)
 end
 
 local function onMesgComplete(req, cbtype, remaining, keepAlive)
@@ -239,8 +264,14 @@ local function parseHttpBuffer(req, conn)
         -- matched against most number of return results possible. Actual variable names
         -- are meaningless without the context of correct callback, misleading even!
         local cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status = parser:parseHttpBuffer(conn)
+        if (not cbtype) then
+            conn:close()
+            error(remaining) -- remaining carries error message in this case
+        end
+
         local callback = http_callbacks_lua[cbtype]
-        if not callback then
+        if (not callback) then
+            conn:close()
             error("Invalid HTTP parser callback# "..tostring(cbtype).." requested")
         end
         callback(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
@@ -252,7 +283,7 @@ end
 local function readAndParse(req)
     if (not req.luaw_mesg_done) then
    		local conn = req.luaw_conn
-    	local status, mesg = assert(conn:read(req.readTimeout))
+    	local mesg = conn:read(req.readTimeout)
 
     	if mesg == 'EOF' then
         	req.luaw_headers_done = true
@@ -271,14 +302,6 @@ local function shouldCloseConnection(req)
         return true
     end
 end
-
---local function isComplete(req)
---    return rawget(req, 'luaw_mesg_done')
---end
---
---local function headersDone(req)
---    return rawget(req, 'luaw_headers_done')
---end
 
 local function parseParams(req)
     if (req.luaw_mesg_type == 'sreq') then
@@ -309,6 +332,13 @@ local function parseParams(req)
     end
 end
 
+local function clearArrayPart(t)
+    local len = #t
+    for i=1,len do
+        t[i] = nil
+    end
+end
+
 local function readFull(req)
     -- loop and block till the body is completely parsed
     local headersDone, mesgDone = false, false
@@ -316,18 +346,17 @@ local function readFull(req)
         headersDone, mesgDone = req:readAndParse()
     end
 
-    local bodyChunks = rawget(req, 'bodyChunks')
-    local body = ""
-    if (bodyChunks) then
-        if (#bodyChunks > 0) then
-            body = table.concat(bodyChunks)
-        end
-        req.bodyChunks = nil
+    local body = nil
+    local bodyParts = rawget(req, 'bodyParts')
+    if ((bodyParts)and(#bodyParts > 0)) then
+        body = table.concat(bodyParts)
+        clearArrayPart(bodyParts)
     end
 
     req.body = body
     parseParams(req)
-    return body
+
+    return req.EOF
 end
 
 local function getParsedURL(req)
@@ -345,22 +374,15 @@ local function getParsedURL(req)
     return parsedURL
 end
 
-local function clearArrayPart(t)
-    local len = #t
-    for i=1,len do
-        t[i] = nil
-    end
-end
-
 local function readStreaming(req)
     if not rawget(req, 'luaw_mesg_done') then
         local headersDone, mesgDone = req:readAndParse()
-        local bodyChunks = rawget(req, 'bodyChunks')
-        local body = nil
 
-        if ((bodyChunks)and(#bodyChunks > 0)) then
-            body = table.concat(bodyChunks)
-            clearArrayPart(bodyChunks)
+        local body = nil
+        local bodyParts = rawget(req, 'bodyParts')
+        if ((bodyParts)and(#bodyParts > 0)) then
+            body = table.concat(bodyParts)
+            clearArrayPart(bodyParts)
         end
         return headersDone, mesgDone, body
     end
@@ -421,14 +443,22 @@ function buildURL(req)
     return req.url
 end
 
-local function setStatus(resp, statusCode)
-    resp.statusCode = statusCode
-    resp.statusMesg = http_status_codes[statusCode]
+local function setStatus(resp, status)
+    resp.status = status
+    resp.statusMesg = http_status_codes[status]
+end
+
+local function getStatus(resp)
+    return resp.status
+end
+
+local function getBody(resp)
+    return resp.body
 end
 
 local function firstResponseLine(resp)
     local line = {"HTTP/", resp.major_version, ".", resp.minor_version,
-        " ", resp.statusCode, " ", resp.statusMesg, CRLF}
+        " ", resp.status, " ", resp.statusMesg, CRLF}
     return table.concat(line)
 end
 
@@ -446,7 +476,7 @@ local function bufferAndWrite(str, conn, writeTimeout, isChunked, flush)
         end
         if (remainingStr or flush) then
             -- either buffer is full or flush requested
-            assert(conn:write(writeTimeout, isChunked))
+            conn:write(writeTimeout, isChunked)
         end
         str = remainingStr
     end
@@ -576,28 +606,33 @@ end
 local conn = Luaw.newConnection();
 local connMT = getmetatable(conn)
 conn:close()
+local startReadingInternal = connMT.startReading
 local readInternal = connMT.read
 local writeInternal = connMT.write
 
+connMT.startReading = function(self)
+    local status, mesg = startReadingInternal(self)
+    assert(status, mesg)
+end
+
 connMT.read = function(self, readTimeout)
-    readTimeout = readTimeout or DEFAULT_READ_TIMEOUT
-    local status, mesg = readInternal(self, Luaw.scheduler.tid(), readTimeout)
+    local status, mesg = readInternal(self, Luaw.scheduler.tid(), readTimeout or DEFAULT_READ_TIMEOUT)
     if ((status)and(mesg == 'WAIT')) then
         -- nothing in buffer, wait for libuv on_read callback
         status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
     end
-    return status, mesg
+    assert(status, mesg)
+    return mesg
 end
 
 connMT.write = function(self, writeTimeout, isChunked)
-    writeTimeout = writeTimeout or DEFAULT_WRITE_TIMEOUT
-    local status, nwritten = writeInternal(self, Luaw.scheduler.tid(), writeTimeout, isChunked)
-
+    local status, nwritten = writeInternal(self, Luaw.scheduler.tid(), writeTimeout  or DEFAULT_WRITE_TIMEOUT, isChunked)
     if ((status)and(nwritten > 0)) then
         -- there is something to write, yield for libuv callback
         status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
     end
-    return status, nwritten
+    assert(status, nwritten)
+    return nwritten
 end
 
 local function reset(req)
@@ -605,13 +640,13 @@ local function reset(req)
     req["_acc_header_name_"] = nil
     req["_acc_header_value_"] = nil
     req.url = nil
-    req.bodyChunks = nil
+    req.bodyParts = {}
     req.body = nil
     req.luaw_mesg_done = nil
     req.luaw_headers_done = nil
     req.params = nil
     req.parsedURL = nil
-    req.statusCode = nil
+    req.status = nil
     req.statusMesg = nil
 end
 
@@ -620,6 +655,7 @@ Luaw.newServerHttpRequest = function(conn)
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
 	    headers = {},
+	    bodyParts = {},
 	    luaw_parser = Luaw:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
@@ -629,6 +665,7 @@ Luaw.newServerHttpRequest = function(conn)
 	    getParsedURL = getParsedURL,
 	    readFull = readFull,
 	    readStreaming = readStreaming,
+	    getBody = getBody,
 	    reset = reset,
 	    close = close
 	}
@@ -662,12 +699,15 @@ local function newClientHttpResponse(conn)
 	    luaw_mesg_type = 'cresp',
 	    luaw_conn = conn,
 	    headers = {},
+	    bodyParts = {},
 	    luaw_parser = Luaw:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    readAndParse = readAndParse,
 	    isComplete = isComplete,
 	    headersDone = headersDone,
+	    getBody = getBody,
+	    getStatus = getStatus,
 	    readFull = readFull,
 	    readStreaming = readStreaming,
 	    reset = reset,
@@ -680,44 +720,27 @@ local connectInternal = Luaw.connect
 
 local function connect(req)
     local hostName, hostIP = req.hostName, req.hostIP
-    assert((hostIP or hostName), "Either hostName or hostIP must be specified in request")
-
-    local status, mesg = nil
+    assert((hostName or hostIP), "Either hostName or hostIP must be specified in request")
     local threadId = Luaw.scheduler.tid()
-
     if not hostIP then
-        status, mesg = Luaw.resolveDNS(hostName, threadId)
-        if status then
-            -- initial resolveDNS succeeded, block for libuv callback
-            status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
-        end
-        if not status then
-            return status, mesg
-        end
+        local status, mesg = Luaw.resolveDNS(hostName, threadId)
+        assert(status, mesg)
+        status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
+        assert(status, mesg)
         hostIP = mesg
     end
 
     local connectTimeout = req.connectTimeout or DEFAULT_CONNECT_TIMEOUT
-    local conn, mesg = connectInternal(hostIP, req.port, threadId, connectTimeout)
-    if (not conn) then
-        -- error, conn is status
-        return conn, mesg
-    end
+    local conn = assert(connectInternal(hostIP, req.port, threadId, connectTimeout))
 
     -- initial connect_req succeeded, block for libuv callback
-    status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
-    if (not status) then
-        -- error in connect callback
-        return status, mesg
-    end
-
-    -- connected successfully
+    assert(coroutine.yield(TS_BLOCKED_EVENT))
     return conn
 end
 
 local function connectReq(req)
-    conn = assert(connect(req))
-    assert(conn:startReading())
+    conn = connect(req)
+    conn:startReading()
     req.luaw_conn = conn
     local resp = newClientHttpResponse(conn)
     resp.readTimeout = req.readTimeout
@@ -726,7 +749,17 @@ local function connectReq(req)
 end
 
 local function execute(req)
-    resp = req:connect()
+    local resp = req:connect()
+    req:flush()
+    resp:readFull()
+    if resp:shouldCloseConnection() then
+        resp:close()
+    end
+    return resp
+end
+
+local function execute(req)
+    local resp = req:connect()
     req:flush()
     resp:readFull()
     if resp:shouldCloseConnection() then
@@ -742,7 +775,9 @@ Luaw.newClientHttpRequest = function()
         major_version = 1,
         minor_version = 1,
         method = 'GET',
+	    contentLength = 0,
         headers = {},
+        bodyParts = {},
         addHeader = addHeader,
         connect = connectReq,
         execute = execute,

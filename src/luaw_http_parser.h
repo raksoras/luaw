@@ -51,7 +51,6 @@ extern int luaw_url_decode(lua_State *L);
 extern int luaw_new_http_request_parser(lua_State *L);
 extern int luaw_new_http_response_parser(lua_State *L);
 extern int luaw_parse_url(lua_State *L);
-extern int luaw_to_http_error(lua_State *L);
 extern void luaw_init_http_lib(lua_State *L);
 
 #endif
