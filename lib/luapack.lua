@@ -1,3 +1,25 @@
+--[[
+Copyright (c) 2015 raksoras
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+]]
+
 local luaw_lib = require("luaw_lib")
 local testing = require("unit_testing")
 
@@ -38,7 +60,7 @@ lpackMT.DICT_URL_RANGES = {
 
 local lpackArrayMT = {}
 
-local function newArray(size) 
+local function newArray(size)
     local arr = luaw_lib.createDict(size, 0)
     setmetatable(arr, lpackArrayMT)
     return arr
@@ -72,7 +94,7 @@ local function readNextBuffer(lpack, desiredLen)
         local newBuffer = lpack:reader(desiredLen)
         if not newBuffer then
             lpack.EOF = true
-        else    
+        else
             local buffer = lpack.buffer
             local offset = lpack.offset
             if ((buffer)and(#buffer > offset)) then
@@ -92,11 +114,11 @@ local function readNumber(lpack, numType)
         if (readLen < 0) then
             error("Error while reading number at byte# "..tostring(offset).." in buffer: "..tostring(lpack.buffer))
         end
-        if (readLen > 0) then 
+        if (readLen > 0) then
             lpack.offset = offset + readLen
-            return value 
-        end        
-        readNextBuffer(lpack, desiredLen);    
+            return value
+        end
+        readNextBuffer(lpack, desiredLen);
     end
 end
 
@@ -111,7 +133,7 @@ local function readString(lpack, desiredLen)
         local buffer = lpack.buffer
         local readLen, value = lpack.read_string(desiredLen, lpack.buffer, offset)
 
-        if (readLen > 0) then 
+        if (readLen > 0) then
             lpack.offset = offset + readLen
             desiredLen = desiredLen - readLen
 
@@ -120,14 +142,14 @@ local function readString(lpack, desiredLen)
                     table.insert(accm, value)
                     return table.concat(accm)
                 end
-                return value 
+                return value
             end
 
             if not accm then accm = {} end
             table.insert(accm, value)
-        end        
+        end
 
-        readNextBuffer(lpack, desiredLen);    
+        readNextBuffer(lpack, desiredLen);
     end
 end
 
@@ -143,7 +165,7 @@ local function deserialize(lpack, container, isMap)
             val = deserialize(lpack, luaw_lib.createDict(0, 16), true)
             goto processing
         end
-            
+
         if t == lpack.ARRAY_START[2] then
             val = deserialize(lpack, newArray(16), false)
             goto processing
@@ -154,22 +176,22 @@ local function deserialize(lpack, container, isMap)
             lpack:useDictionary(dictionary)
             goto last --continue
         end
-            
+
         if t == lpack.RECORD_END[2] then
             if ((isMap)and(not isKey)) then
                 error("Unbalanced table, key without corresponding value found")
             end
             return container
         end
-    
+
         if t == lpack.DICT_URL[2] then
             --TODO
         end
-            
+
         if t == lpack.BIG_DICT_URL[2] then
             --TODO
         end
-        
+
         if t == lpack.NIL[2] then
             val = nil
             goto processing
@@ -179,7 +201,7 @@ local function deserialize(lpack, container, isMap)
             val = true
             goto processing
         end
-    
+
         if t == lpack.BOOL_FALSE[2] then
             val = false
             goto processing
@@ -190,7 +212,7 @@ local function deserialize(lpack, container, isMap)
             val = readString(lpack, len)
             goto processing
         end
-    
+
         if t == lpack.BIG_STRING[2] then
             len = readNumber(lpack, lpack.UINT_16[2])
             val = readString(lpack, len)
@@ -212,16 +234,16 @@ local function deserialize(lpack, container, isMap)
 
         if t == lpack.BIG_DICT_ENTRY[2] then
             local dw = readNumber(lpack, lpack.UINT_16[2])
-            assert(dictionary, "Missing dictionary")            
+            assert(dictionary, "Missing dictionary")
             val = assert(dictionary[dw], "Entry missing in dictionary")
             goto processing
         end
 
         -- everything else is a number
-        val = readNumber(lpack, t)    
+        val = readNumber(lpack, t)
 
         ::processing::
-        
+
         if container then
             if isMap then
                 if isKey then
@@ -239,10 +261,10 @@ local function deserialize(lpack, container, isMap)
             -- single, standalone value
             return val
         end
-        
+
         ::last::
     end
-    
+
     return val
 end
 
@@ -262,7 +284,7 @@ local function fileReader(fileName)
     if not f then
         error("Could not open file "..fileName.." for reading")
     end
-    
+
     return function(lpack, desiredLen, cmd)
         if (not cmd) then
             return f:read(desiredLen)
@@ -283,7 +305,7 @@ local function stringReader(str)
     end
 end
 
-local function newLPackReader(reader)    
+local function newLPackReader(reader)
     if (type(reader) ~= 'function') then
         error("Please provide valid function (reader) to read next buffer")
     end
@@ -313,7 +335,7 @@ end
 local function flush(lpack)
     local writeQ = lpack.writeQ
     local count = #writeQ
-    if count then    
+    if count then
         local str = lpack.serialize_write_Q(writeQ, lpack.writeQsize)
         if str then
             lpack:writer(str)
@@ -329,14 +351,14 @@ local function qstore(lpack, val, size)
     if not val then
         error("nil string passed to write(), use writeNil() instead")
     end
-    
+
     local writeQ = lpack.writeQ
     table.insert(writeQ, val);
     local accSize = lpack.writeQsize + size;
-    
+
     if (accSize >= lpack.flushLimit) then
         flush(lpack)
-    else 
+    else
         lpack.writeQsize = accSize
     end
 end
@@ -378,7 +400,7 @@ end
 
 local function writeNumber(lpack, num)
     local range
-    
+
     if (num % 1 == 0) then
         -- integer
         range = findMinRange(num, lpack.INT_RANGES)
@@ -390,7 +412,7 @@ local function writeNumber(lpack, num)
     qstore(lpack, num, range[3]);
 end
 
-local function writeString(lpack, str) 
+local function writeString(lpack, str)
     local dw, len, range
     local dict = lpack.dictionary
     if dict then
@@ -401,7 +423,7 @@ local function writeString(lpack, str)
         range = findMinRange(dw, lpack.DICT_ENTRY_RANGES)
         str = dw
         len = range[3]
-    else 
+    else
         len = #str
         range = findMinRange(len, lpack.STRING_RANGES)
     end
@@ -419,7 +441,7 @@ local function writeDictionary(lpack, dict)
         dictionary[dw] = i
     end
     writeMarker(lpack, lpack.RECORD_END)
-    lpack.dictionary = dictionary 
+    lpack.dictionary = dictionary
 end
 
 local function writeDictionaryURL(lpack, url)
@@ -432,43 +454,43 @@ end
 
 local function serialize(lpack, val)
     local t = type(val)
-    
+
     if t == 'nil' then
         writeNil(lpack)
         return;
     end
-    
+
     if t == 'boolean' then
         writeBoolean(lpack, val)
         return
     end
-    
+
     if t == 'number' then
         writeNumber(lpack, val)
-        return 
+        return
     end
-    
+
     if t == 'string' then
         writeString(lpack, val)
         return
     end
-    
+
     if t == 'table' then
         if (getmetatable(val) == lpackArrayMT) then
-            writeMarker(lpack, lpack.ARRAY_START)       
+            writeMarker(lpack, lpack.ARRAY_START)
             for i, v in ipairs(val) do
                 serialize(lpack, v)
             end
-            endCollection(lpack)            
+            endCollection(lpack)
         else
-            writeMarker(lpack, lpack.MAP_START)       
+            writeMarker(lpack, lpack.MAP_START)
             for k, v in pairs(val) do
                 serialize(lpack, k)
                 serialize(lpack, v)
             end
-            endCollection(lpack)            
+            endCollection(lpack)
         end
-    end 
+    end
 end
 
 local function write(lpack, val)
@@ -492,7 +514,7 @@ local function newLPackWriter(writer)
     lpackWriter.newArray = newArray
     lpackWriter.writeDictionaryURL = writeDictionaryURL
     lpackWriter.writer= writer
-    lpackWriter.write = write        
+    lpackWriter.write = write
     lpackWriter.close = close
     lpackWriter.useDictionary = setDictionaryForWrite
     lpackWriter.writeDictionary = writeDictionary
@@ -505,7 +527,7 @@ local function fileWriter(fileName)
     if not f then
         error("Could not open file "..fileName.." for writing")
     end
-    
+
     return function(lpack, str, cmd)
         if (not cmd) then
             return f:write(str)
@@ -520,7 +542,7 @@ end
 local function stringWriter()
     local buff = {}
     local val
-    
+
     return function(lpack, str, cmd)
         if (not cmd) then
             return table.insert(buff, str)

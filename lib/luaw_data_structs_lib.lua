@@ -1,3 +1,25 @@
+--[[
+Copyright (c) 2015 raksoras
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+]]
+
 local luaw_lib = require("luaw_lib")
 local module = {}
 
@@ -8,14 +30,14 @@ local module = {}
 -- reg[0] stores head of the free list
 local function ref(reg, obj)
     if not obj then return -1 end
-    
+
     local ref = reg[0];
     if ref then
         reg[0] = reg[ref]
     else
         ref = #reg + 1
     end
-    
+
     reg[ref] = obj
     reg.size = reg.size + 1
     return ref
@@ -45,7 +67,7 @@ local function offer(rb, obj)
     local size = rb.size
     local filled = rb.filled
     local writer = rb.writer
-     
+
     if (filled < size) then
         rb[writer] = obj
         rb.filled = filled + 1
@@ -73,7 +95,7 @@ local function take(rb)
     local filled = rb.filled
     local reader = rb.reader
     local obj = nil
-    
+
     if (filled > 0) then
         obj = rb[reader];
         rb[reader] = nil;
@@ -99,7 +121,7 @@ end
 local function offerWithOverwrite(rb, obj)
     local added = offer(rb, obj)
     if added then return true end
-    
+
     -- overwrite oldest item
     local overwrittenObj = take(rb)
     offer(rb, obj)
@@ -107,36 +129,36 @@ local function offerWithOverwrite(rb, obj)
 end
 
 
-function module.newRingBuffer(size) 
+function module.newRingBuffer(size)
     local rb = {}
     rb.reader = 1
     rb.writer = 1
     rb.filled = 0
     rb.size = size
     rb.offer = offer
-    rb.take = take    
+    rb.take = take
     return rb
 end
 
-function module.newOverwrittingRingBuffer(size) 
+function module.newOverwrittingRingBuffer(size)
     local rb = {}
     rb.reader = 1
     rb.writer = 1
     rb.filled = 0
     rb.size = size
     rb.offer = offerWithOverwrite
-    rb.take = take    
+    rb.take = take
     return rb
 end
 
-function module.newBlockingRingBuffer(size) 
+function module.newBlockingRingBuffer(size)
     local rb = {}
     rb.reader = 1
     rb.writer = 1
     rb.filled = 0
     rb.size = size
     rb.offer = offerWithWait
-    rb.take = takeWithWait    
+    rb.take = takeWithWait
     return rb
 end
 

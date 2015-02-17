@@ -1,8 +1,8 @@
 #1. Introduction
 
-Luaw stands for "Lua web server". It is a happy coincidence that it also matches abbreviation for an air traffic controller command "line up and wait" that closely resembles the way it handles multiple requests using event loop :)
+Luaw stands for "Lua web server". It also matches abbreviation for an air traffic controller command "line up and wait" that closely resembles the way it handles multiple requests using event loop :)
 
-Luaw is an event driven, non blocking IO based server inspired by node.js. It uses node.js's excellent async library libuv to do non-blocking IO but instead of Javascript it uses [Lua](http://www.lua.org/) as its language for application development. Luaw takes advantage of Lua's first class coroutine support to avoid [callback hell](http://callbackhell.com/). This makes writing async IO code as simple as writing sequential code while all the heavy-lifting of application state machine management that is usually associated with async IO is transparently handled by Lua coroutines. This mean a Luaw application developer gets best of both worlds - [scale](http://www.kegel.com/c10k.html) of event driven IO and simplicity of blocking IO like code.
+Luaw is an event driven, non blocking IO based HTTP application server inspired by node.js. It uses node.js's excellent async library libuv to do non-blocking IO but instead of Javascript it uses [Lua](http://www.lua.org/) as its language for application development. Luaw takes advantage of Lua's first class coroutine support to avoid [callback spaghetti problem](http://callbackhell.com/). This makes writing async IO code as simple as writing sequential code while all the heavy-lifting of application state machine management that is usually associated with async IO is transparently handled by Lua coroutines. This mean a Luaw application developer gets best of both worlds - [scale](http://www.kegel.com/c10k.html) of event driven IO and simplicity of blocking IO like code.
 
 
 ##Features
@@ -20,4 +20,4 @@ Luaw is an event driven, non blocking IO based server inspired by node.js. It us
 7. Support for spawning user threads that can hook into Luaw's async IO machinery for calling multiple backend services from Luaw in parallel.
 8. Support for user timers for implementing periodic cron like jobs inside Luaw server.
 9. Log4j like logging framework with configurable log levels, log file size limits and automatic log rotation that integrates with syslog out of the box.
-10. MessagePack like library to efficiently serialize/deserialize arbitrarily complex data into compact and portable binary format for remote web service calls.
+10. [MessagePack](http://msgpack.org/) like library to efficiently serialize/deserialize arbitrarily complex data into compact and portable binary format for remote web service calls.
