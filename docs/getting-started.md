@@ -32,7 +32,7 @@ Luaw uses node.js library libuv to do asynchronous, event based IO in a portable
 2. Checkout latest stable release of libuv from the cloned local repository. As of this writing the latest stable release is v1.0.0 and Luaw is verified to compile and run successfully with this release of libuv.
         cd libuv
         git checkout tags/v1.0.0
-3. Build libuv. Detailed instructions are [here](https://github.com/joyent/libuv#build-instructions)
+3. Build libuv. This may require you to install autotools. Detailed instructions are [here](https://github.com/joyent/libuv#build-instructions)
         sh autogen.sh
         ./configure
         make
