@@ -108,3 +108,7 @@ luaw_root_dir
 
 Luaw uses [MIT license](http://opensource.org/licenses/mit-license.html) for all parts of Luaw that are not externally
 maintained libraries like libuv.
+
+## Documentation
+
+Please refer to the [project wiki](https://github.com/raksoras/luaw/wiki) for documentation regardng how to build, configure, start and program using Luaw.
