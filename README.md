@@ -55,11 +55,16 @@ To see what OSes are supported run ./lua-5.2.3/src/Makefile targets
 Luaw uses node.js library libuv to do asynchronous, event based IO in a portable, cross platform  manner. To build libuv:
 
 1. first clone libuv repository
+
         git clone https://github.com/joyent/libuv.git
+        
 2. Checkout latest stable release of libuv from the cloned local repository. As of this writing the latest stable release is v1.0.0 and Luaw is verified to compile and run successfully with v1.0.0 release of libuv.
+
         cd libuv
         git checkout tags/v1.0.0
+        
 3. Build libuv. Detailed instructions are [here](https://github.com/joyent/libuv#build-instructions)
+        
         sh autogen.sh
         ./configure
         make
@@ -70,14 +75,21 @@ Luaw uses node.js library libuv to do asynchronous, event based IO in a portable
 With all dependencies built, now we are ready to build Luaw itself.
 
 1. Clone Luaw repository
+
         git clone https://github.com/raksoras/luaw.git
+        
 2. Build Luaw
+
         cd luaw/src
         make linux
+        
 3. Install Luaw binary - luaw_server - in directory of your choice
-	make INSTALL_ROOT=<luaw_root_dir> install
+
+        make INSTALL_ROOT=<luaw_root_dir> install
+        
 4. Note: On Mac running Yosemite version of Mac OS you may have to run,
-	make SYSCFLAGS=-I/usr/local/include SYSLDFLAGS=-L/usr/local/lib macosx
+
+        make SYSCFLAGS=-I/usr/local/include SYSLDFLAGS=-L/usr/local/lib macosx
         make INSTALL_ROOT=<luaw_root_dir> install
 
 
