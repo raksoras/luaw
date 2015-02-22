@@ -63,7 +63,13 @@ Luaw uses node.js library libuv to do asynchronous, event based IO in a portable
         cd libuv
         git checkout tags/v1.0.0
         
-3. Build libuv. Detailed instructions are [here](https://github.com/joyent/libuv#build-instructions)
+3. libuv uses autotools, autoconf and libtoolize in its build system. If you machine is not already setup with these, you can use following steps to get these tools. Otherwise skip to step 4 below.
+
+        sudo apt-get install autotools-dev
+        sudo apt-get install autoconf
+        sudo apt-get install build-essential libtool
+        
+4. Build libuv. Detailed instructions are [here](https://github.com/joyent/libuv#build-instructions)
         
         sh autogen.sh
         ./configure
@@ -83,22 +89,22 @@ With all dependencies built, now we are ready to build Luaw itself.
         cd luaw/src
         make linux
         
-3. Install Luaw binary - luaw_server - in directory of your choice
+3. Install Luaw binary - luaw_server - in directory of your choice. We will use `~/luawsample` in all our examples going forward as a directory of choice for Luaw installation
 
-        make INSTALL_ROOT=<luaw_root_dir> install
+        make INSTALL_ROOT=~/luawsample install
         
 4. Note: On Mac running Yosemite version of Mac OS you may have to run,
 
         make SYSCFLAGS=-I/usr/local/include SYSLDFLAGS=-L/usr/local/lib macosx
-        make INSTALL_ROOT=<luaw_root_dir> install
+        make INSTALL_ROOT=~/luawsample install
 
 
 ##Luaw directory structure
 
-In the tree diagram below `luaw_root_dir` is a directory that you chose in the `make intsall` step above. It will act as a root for Luaw server's directory structure. The `make install` step will create following directory structure under `luaw_root_dir`
+In the tree diagram below `~/luawsample` is a directory that you chose in the `make intsall` step above. It will act as a root for Luaw server's directory structure. The `make install` step will create following directory structure under `~/luawsample`
 
 ```
-luaw_root_dir
+~/luawsample
  |
  |
  +--- bin              Directory that holds Luaw server binary we built
