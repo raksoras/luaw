@@ -1,4 +1,4 @@
-#1. Introduction
+#Introduction
 
 Luaw stands for "Lua web server". It also matches abbreviation for an air traffic controller command "line up and wait" that closely resembles the way it handles multiple requests using event loop :)
 
