@@ -1,10 +1,10 @@
-Luaw
-=====
+Luaw - Lua meets Node.js
+========================
 ***
 
 Luaw stands for "Lua web server". It also matches abbreviation for an air traffic controller command "Line Up And Wait" that closely resembles the way it handles multiple requests using event loop :)
 
-Luaw is an event driven, non blocking IO based HTTP application server inspired by node.js. It uses node.js's excellent async library libuv to do non-blocking IO but instead of Javascript it uses [Lua](http://www.lua.org/) as its primary language for application development. Luaw takes advantage of Lua's first class coroutine support to avoid [callback spaghetti problem](http://callbackhell.com/). This makes writing async IO code as straight forward as writing sequential code while all the heavy-lifting of application state management is transparently handled by Lua coroutines. This mean a Luaw application developer gets best of both worlds - [scale](http://www.kegel.com/c10k.html) of event driven IO and code simplicity of blocking IO.
+Luaw is an event driven, non blocking IO based HTTP application server inspired by Node.js. It uses Node.js's excellent async library libuv to do non-blocking IO but instead of Javascript it uses [Lua](http://www.lua.org/) as its primary language for application development. Luaw takes advantage of Lua's first class coroutine support to avoid [callback spaghetti problem](http://callbackhell.com/). This makes writing async IO code as straight forward as writing sequential code while all the heavy-lifting of application state management is transparently handled by Lua coroutines. This mean a Luaw application developer gets best of both worlds - [scale](http://www.kegel.com/c10k.html) of event driven IO and code simplicity of blocking IO.
 
 
 ##Features
@@ -130,3 +130,7 @@ maintained libraries like libuv.
 ## Documentation
 
 Please refer to the [project wiki](https://github.com/raksoras/luaw/wiki) for documentation regarding how to build, configure, start and program using Luaw.
+
+## Getting in touch
+
+Please post your questions/comments on Google Group [Luaw](https://groups.google.com/forum/#!forum/luaw) and follow [@raksoras](https://twitter.com/raksoras) on Twitter
