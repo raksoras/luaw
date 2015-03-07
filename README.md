@@ -56,7 +56,7 @@ Luaw uses node.js library libuv to do asynchronous, event based IO in a portable
 
 1. first clone libuv repository
 
-        git clone https://github.com/joyent/libuv.git
+        git clone https://github.com/libuv/libuv.git
         
 2. Checkout latest stable release of libuv from the cloned local repository. As of this writing the latest stable release is v1.0.0 and Luaw is verified to compile and run successfully with v1.0.0 release of libuv.
 
