@@ -56,8 +56,6 @@ static const char *http_methods[] =
 #undef XX
   };
 
-#define PARSE_START(conn)  (void *)(conn->read_buffer + conn->parse_len)
-#define PARSE_LEN(conn)  (conn->read_len - conn->parse_len)
 
 typedef struct {
     http_parser parser;

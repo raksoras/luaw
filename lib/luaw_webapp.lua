@@ -176,7 +176,7 @@ end
 
 local function dispatchAction(req, resp)
     assert(req, "HTTP request may not be nil")
-    local parsedURL = req:getParsedURL()
+    local parsedURL = req.parsedURL
 
     if not(req.method and  parsedURL) then
         -- EOF in case of persistent connections
@@ -339,6 +339,7 @@ local function serviceHTTP(conn)
             if (status) then
                 return "read time out"
             end
+            print("Error: ", eof)
             return "connection reset by peer"
         end
 

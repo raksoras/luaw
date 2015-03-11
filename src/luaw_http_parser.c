@@ -257,43 +257,51 @@ static const http_parser_settings parser_settings = {
 
 /* Lua call spec:
 * All failures:
-*       false, error message = parseHttpBuffer(conn)
+*       false, error message = parser:parseHttp(str, offset)
 *
 * Successes:
 *
 *   http_parser_on_headers_complete:
-*       http_cb_type, buffer remaining, http_should_keep_alive, major_version, minor_version, http method, http status code = parseHttpBuffer(conn)
+*       http_cb_type, new offset, http_should_keep_alive, major_version, minor_version, http method, http status code = parseHttp(conn)
 *
 *   http_parser_on_message_complete:
-*       http_cb_type, buffer remaining, http_should_keep_alive = parseHttpBuffer(conn)
+*       http_cb_type, new offset, http_should_keep_alive = parser:parseHttp(str, offset)
 *
 *   All other callbacks:
-*       http_cb_type, buffer remaining, parsed value = parseHttpBuffer(conn)
+*       http_cb_type, new offset, parsed value = parser:parseHttp(conn, str, offset)
 *
 */
-static int parse_http_buffer(lua_State *L) {
-    lua_settop(L, 2);
+static int parse_http(lua_State *L) {
+    lua_settop(L, 3);
+
 	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
 	http_parser* parser = &lhttp_parser->parser;
-    LUA_GET_CONN_OR_ERROR(L, 2, conn);
 
-	char* buff = PARSE_START(conn);
-	const size_t len = PARSE_LEN(conn);
+    size_t len = 0;
+    const char* buff = lua_tolstring(L, 2, &len);
+
+    int offset = lua_tointeger(L, 3);
+    if (offset > len) {
+        lua_pushboolean(L, 0);
+        lua_pushfstring(L, "Wrong offset into HTTP string: len=%d, offset=%d, content=%s\n", len, offset, buff);
+        return 2;
+    }
+
 	/* every http_parser_execute() does not necessarily cause callback to be invoked, we need to know if it
 	   did call the callback */
 	lhttp_parser->http_cb = http_cb_none;
-
-	const int nparsed = http_parser_execute(parser, &parser_settings, buff, len);
-	const int remaining = len - nparsed;
+	const int nparsed = http_parser_execute(parser, &parser_settings, (buff+offset), (len-offset));
+	offset += nparsed;
+	const int remaining = len - offset;
 
     if ((remaining > 0)&&(parser->http_errno != HPE_PAUSED)) {
         lua_pushboolean(L, 0);
-        lua_pushfstring(L, "400 Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%s\n", parser->http_errno, len, nparsed, buff);
+        lua_pushfstring(L, "Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%s\n", parser->http_errno, len, nparsed, buff);
         return 2;
     }
 
     lua_pushinteger(L, lhttp_parser->http_cb);
-    lua_pushinteger(L, remaining);
+    lua_pushinteger(L, offset);
     int nresults = 3;
 
     switch(lhttp_parser->http_cb) {
@@ -323,15 +331,8 @@ static int parse_http_buffer(lua_State *L) {
             lua_pushlstring(L, lhttp_parser->start, lhttp_parser->len);
     }
 
-	if (remaining == 0) {
-	    /* buffer fully parsed */
-	    clear_read_buffer(conn);
-	} else {
-        /* "forward" buffer to the end of last parsed request and un-pause the parser */
-        conn->parse_len += nparsed;
-    }
+    /* un-pause parser */
     http_parser_pause(parser, 0);
-
     return nresults;
 }
 
@@ -379,7 +380,7 @@ LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
 }
 
 static const struct luaL_Reg http_parser_methods[] = {
-	{"parseHttpBuffer", parse_http_buffer},
+	{"parseHttp", parse_http},
 	{"initHttpParser", luaw_init_http_parser},
 	{NULL, NULL}  /* sentinel */
 };

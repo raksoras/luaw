@@ -36,22 +36,21 @@ struct connection_s {
 
     /* read section */
     int lua_reader_tid;                     /* ID of the reading coroutine */
-    char read_buffer[CONN_BUFFER_SIZE];     /* buffer to read into */
 	size_t read_len;			            /* read length */
-    size_t parse_len;                       /* length of buffer parsed so far - HTTP pipelining */
     uv_timer_t read_timer;                  /* for read timeout */
 
     /* write section */
     int lua_writer_tid;                     /* ID of the writing coroutine */
-    char write_buffer[CONN_BUFFER_SIZE];    /* buffer to write from */
-	size_t write_len;			            /* write length */
-	char chunk_header[16];		            /* buffer to write HTTP 1.1 chunk header */
     uv_timer_t write_timer;                 /* for write/connect timeout */
     uv_write_t write_req;                   /* write request */
 
     /* memory management */
     int ref_count;                          /* reference count */
     connection_t** lua_ref;                 /* back reference to Lua's full userdata pointing to this conn */
+
+    /* read-write buffers */
+    char read_buffer[CONN_BUFFER_SIZE];     /* buffer to read into */
+    char write_buffer[CONN_BUFFER_SIZE];    /* buffer to write from */
 };
 
 #define MAX_CONNECTION_BUFF_SIZE 65536  //16^4

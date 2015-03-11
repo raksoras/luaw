@@ -160,6 +160,86 @@ setmetatable(http_status_codes, {
     end
 })
 
+-- write buffer implementation
+
+local function clearArrayPart(t)
+    local len = #t
+    for i=1,len do
+        t[i] = nil
+    end
+end
+
+local function reset(buffer)
+    clearArrayPart(buffer)
+    buffer.len = 0
+end
+
+local function concat(buffer)
+    return table.concat(buffer)
+end
+
+local function append(buffer, str)
+    local len = buffer.len
+    if (str) then
+        table.insert(buffer, str)
+        len = len + #str
+        buffer.len = len
+    end
+    return (len >= buffer.limit)
+end
+
+local function isOverLimit(buffer)
+    return (buffer.len >= buffer.limit)
+end
+
+local substr = string.sub
+
+-- returns remaining str, chunk
+local function allowLastChunkPartialIterator(buffer, str)
+	local limit = buffer.limit
+    if (str == '') then
+        return nil
+    end
+    if (#str <= limit) then
+        return '', str
+    end
+    return substr(str, limit+1), substr(str, 1, limit)
+end
+
+local function onlyFullLengthChunksIterator(buffer, str)
+	local limit = buffer.limit
+	if (str == '') then
+		return nil
+	end
+	if (#str < limit) then
+		buffer:append(str)
+		return nil
+	end
+    return substr(str, limit+1), substr(str, 1, limit)
+end
+
+local function chunk(buffer, flush)
+	local str = table.concat(buffer)
+	buffer:reset()
+	if (flush) then
+		return allowLastChunkPartialIterator, buffer, str
+	end
+	return onlyFullLengthChunksIterator, buffer, str
+end
+
+local function newBuffer(limit)
+    return {
+        len = 0,
+        limit = limit or CONN_BUFFER_SIZE,
+        reset = reset,
+        concat = concat,
+        append = append,
+        isOverLimit = isOverLimit,
+        chunk = chunk
+    }
+end
+
+Luaw.newBuffer = newBuffer
 
 function Luaw.storeHttpParam(params, name , value)
 	oldValue = params[name]
@@ -266,7 +346,6 @@ end
 local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
 	handleAccHttpHeader(req)
 	handleKeepAlive(req, keepAlive)
-	req.luaw_headers_done = true
 	req.major_version = httpMajor
 	req.minor_version = httpMinor
     req.method = method
@@ -274,8 +353,7 @@ local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, h
 end
 
 local function onBody(req, cbtype, remaining, chunk)
-    local bodyParts = rawget(req, 'bodyParts')
-    table.insert(bodyParts, chunk)
+    req.bodyParts:append(chunk)
 end
 
 local function onMesgComplete(req, cbtype, remaining, keepAlive)
@@ -283,12 +361,40 @@ local function onMesgComplete(req, cbtype, remaining, keepAlive)
 	-- after the last body chunk
 	handleAccHttpHeader(req)
 	handleKeepAlive(req, keepAlive)
-	req.luaw_mesg_done = true
-	req.luaw_headers_done = true
 	local luaw_parser = req.luaw_parser
     if (luaw_parser) then
         luaw_parser:initHttpParser()
     end
+
+    -- store body
+    local bodyParts = req.bodyParts
+    req.body = bodyParts:concat()
+    bodyParts:reset()
+
+    -- parse URL
+    local url = req.url
+    local parsedURL
+    if url then
+        local method = req.method
+        parsedURL = Luaw.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
+    else
+        parsedURL = {}
+    end
+    req.parsedURL = parsedURL
+
+    local params = {}
+    -- POST form params
+    local contentType = req.headers['Content-Type']
+    if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
+        assert(Luaw:urlDecode(req.body, params))
+    end
+
+    -- GET query params
+    local queryString = parsedURL.queryString
+    if queryString then
+        assert(Luaw:urlDecode(queryString, params))
+    end
+    req.params = params
 end
 
 -- Order is important and must match C enum http_parser_cb_type
@@ -304,136 +410,75 @@ local http_callbacks_lua = {
     onMesgComplete
 }
 
-local function parseHttpBuffer(req, conn)
-    local parser = req.luaw_parser
-    while true do
-        -- matched against most number of return results possible. Actual variable names
-        -- are meaningless without the context of correct callback, misleading even!
-        local cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status = parser:parseHttpBuffer(conn)
-        if (not cbtype) then
-            conn:close()
-            error(remaining) -- remaining carries error message in this case
-        end
-
-        local callback = http_callbacks_lua[cbtype]
-        if (not callback) then
-            conn:close()
-            error("Invalid HTTP parser callback# "..tostring(cbtype).." requested")
-        end
-        callback(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
-        if (remaining == 0) then break end
+local function parseHttpFragment(req, conn, parser, content, offset)
+    -- matched against most number of return results possible. Actual variable names
+    -- are meaningless without the context of correct callback, misleading even!
+    local cbtype, offset, keepAlive, httpMajor, httpMinor, method, status = parser:parseHttp(content, offset)
+    if (not cbtype) then
+        conn:close()
+        return error(offset) -- offset carries error message in this case
     end
+
+    local callback = http_callbacks_lua[cbtype]
+    if (not callback) then
+        conn:close()
+        return error("Invalid HTTP parser callback# "..tostring(cbtype).." requested")
+    end
+
+    callback(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
+    return  cbtype, offset
 end
 
+local function readFull(req)
+    local conn = req.luaw_conn
+    local parser = req.luaw_parser
+    local content = req.luaw_read_content
+    local offset = req.luaw_read_offset
+    local status
+    local http_callback = 0
 
-local function readAndParse(req)
-    if (not req.luaw_mesg_done) then
-   		local conn = req.luaw_conn
-    	local mesg = conn:read(req.readTimeout)
+    while (http_callback ~= 9) do   --http_cb_on_mesg_complete == 9
+        if ((content)and(offset)and(offset < #content)) then
+            -- leftover content from last read after HTTP message was complete. Possibly pipelined HTTP request
+            status = true
+            req.luaw_read_content = nil     --GC
+            req.lua_read_offset = nil
+        else
+            -- read new content from socket
+            status, content = conn:read(req.readTimeout)
+            offset = 0 -- offset is for C, therefore zero based
+        end
 
-    	if mesg == 'EOF' then
-        	req.luaw_headers_done = true
-        	req.luaw_mesg_done = true
-        	req.EOF = true
-        	req:addHeader('Connection', 'close')
-    	else
-        	parseHttpBuffer(req, conn)
-    	end
-	end
-    return req.luaw_headers_done, req.luaw_mesg_done
+        if (not status) then
+            if (content == 'EOF') then
+                req:addHeader('Connection', 'close')
+                req.EOF = true
+                return true; -- EOF, client closed connection
+            else
+                return error(content)
+            end
+        end
+
+        while ((http_callback ~= 9)and(offset < #content)) do
+            http_callback, offset = parseHttpFragment(req, conn, parser, content, offset)
+        end
+
+        if (offset < #content) then
+            -- read content remaining but HTTP message end reached. Possibly pipelined HTTP requests case
+            -- store back remaining content in request object for next HTTP request parsing
+            req.luaw_read_str = content
+            req.luaw_read_offset = offset
+        end
+    end
+
+    req.EOF = false
+    return false    --HTTP message complete, no EOF
 end
 
 local function shouldCloseConnection(req)
     if req and req.EOF then
         return true
     end
-end
-
-local function parseParams(req)
-    if (req.luaw_mesg_type == 'sreq') then
-        local params = rawget(req, 'params')
-        if params then return params end
-
-        if not params then
-            params = {}
-        end
-
-        -- POST form params
-        local contentType = req.headers['Content-Type']
-        if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
-            local status, errMesg = Luaw:urlDecode(req.body, params)
-        end
-
-        -- GET query params
-        local url = req:getParsedURL()
-        if url then
-            local queryString = url.queryString
-            if queryString then
-                Luaw:urlDecode(queryString, params)
-            end
-        end
-
-        req.params = params
-        return params
-    end
-end
-
-local function clearArrayPart(t)
-    local len = #t
-    for i=1,len do
-        t[i] = nil
-    end
-end
-
-local function readFull(req)
-    -- loop and block till the body is completely parsed
-    local headersDone, mesgDone = false, false
-    while (not mesgDone) do
-        headersDone, mesgDone = req:readAndParse()
-    end
-
-    local body = nil
-    local bodyParts = rawget(req, 'bodyParts')
-    if ((bodyParts)and(#bodyParts > 0)) then
-        body = table.concat(bodyParts)
-        clearArrayPart(bodyParts)
-    end
-
-    req.body = body
-    parseParams(req)
-
-    return req.EOF
-end
-
-local function getParsedURL(req)
-    local parsedURL = rawget(req, 'parsedURL')
-    if parsedURL then return parsedURL end
-    local url = req.url
-
-    if url then
-        local method = req.method
-        parsedURL = Luaw.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
-    else
-        parsedURL = {}
-    end
-    req.parsedURL = parsedURL
-    return parsedURL
-end
-
-local function readStreaming(req)
-    if not rawget(req, 'luaw_mesg_done') then
-        local headersDone, mesgDone = req:readAndParse()
-
-        local body = nil
-        local bodyParts = rawget(req, 'bodyParts')
-        if ((bodyParts)and(#bodyParts > 0)) then
-            body = table.concat(bodyParts)
-            clearArrayPart(bodyParts)
-        end
-        return headersDone, mesgDone, body
-    end
-
-    return true, true, nil
 end
 
 local function  toURLSafeChar(ch)
@@ -514,123 +559,108 @@ local function firstRequestLine(req)
     return table.concat(line)
 end
 
-local function bufferAndWrite(str, conn, writeTimeout, isChunked, flush)
-    local remainingSpace, remainingStr = 0, nil
-    while (str) do
-        if (str ~= '') then
-            remainingSpace, remainingStr = conn:appendBuffer(str)
+local function sendBuffer(buffer, conn, writeTimeout, isChunked, flush)
+    for str, chunk in buffer:chunk(flush) do
+        if (isChunked) then
+            chunk = string.format("%04x\r\n", #chunk)..chunk..CRLF
         end
-        if (remainingStr or flush) then
-            -- either buffer is full or flush requested
-            conn:write(writeTimeout, isChunked)
-        end
-        str = remainingStr
+        conn:write(chunk, writeTimeout)
     end
 end
 
-local function flushBuffer(conn, writeTimeout, isChunked)
-    bufferAndWrite('', conn, writeTimeout, isChunked, true)
+local function bufferHeader(buffer, name, value)
+    buffer:append(tostring(name))
+    buffer:append(": ")
+    buffer:append(tostring(value))
+    buffer:append(CRLF)
 end
 
-local function writeHeader(conn, writeTimeout, name, value)
-    bufferAndWrite(tostring(name), conn, writeTimeout, false, false)
-    bufferAndWrite(": ", conn, writeTimeout, false, false)
-    bufferAndWrite(tostring(value), conn, writeTimeout, false, false)
-    bufferAndWrite(CRLF, conn, writeTimeout, false, false)
-end
-
-local function writeHeaders(resp, conn, writeTimeout)
-    local headers = resp.headers
+local function bufferHeaders(headers, buffer)
     if (headers) then
         for name,value in pairs(headers) do
             if (type(value) == 'table') then
                 for i,v in ipairs(value) do
-                    writeHeader(conn, writeTimeout, name, v)
+                    bufferHeader(buffer, name, v)
                 end
             else
-                writeHeader(conn, writeTimeout, name, value)
+                bufferHeader(buffer, name, value)
             end
             headers[name] = nil
         end
     end
-    bufferAndWrite(CRLF, conn, writeTimeout, false, false)
+    buffer:append(CRLF)
 end
 
 local function startStreaming(resp)
     resp.luaw_is_chunked = true
     resp:addHeader('Transfer-Encoding', 'chunked')
 
+    local headers = resp.headers
     local conn = resp.luaw_conn
     local writeTimeout = resp.writeTimeout
+    -- account for chunk header and trailer length
+    local limit = resp.bodyParts.limit
+    resp.bodyParts.limit = limit - 8
 
-    bufferAndWrite(resp:firstLine(), conn, writeTimeout, false, false)
-    writeHeaders(resp, conn, writeTimeout)
-    flushBuffer(conn, writeTimeout, false) -- flush stream before actual chunked encoding starts
+    -- use separate buffer from "bodyParts" to serialize headers
+    local headersBuffer = newBuffer()
+    headersBuffer:append(resp:firstLine())
+    bufferHeaders(headers, headersBuffer)
 
-    local bodyParts = rawget(resp, "bodyParts")
-    if (bodyParts) then
-        for i, bodyPart in ipairs(bodyParts) do
-            bufferAndWrite(bodyPart, conn, writeTimeout, true, false)
-        end
-    end
+    -- flush up to HTTP headers end without chunked encoding before actual body starts
+    sendBuffer(headersBuffer, conn, writeTimeout, false, true)
 end
 
 local function appendBody(resp, bodyPart)
-    if not bodyPart then return end
+    if not bodyPart then
+        return
+    end
 
-    if resp.luaw_is_chunked then
-        -- send connection's buffer full of chunk as they fill
+    local bodyBuffer = resp.bodyParts
+    local isfull = bodyBuffer:append(bodyPart)
+
+    if (resp.luaw_is_chunked and isfull) then
         local conn = resp.luaw_conn
         local writeTimeout = resp.writeTimeout
-        bufferAndWrite(tostring(bodyPart), conn, writeTimeout, true, false)
-    else
-        -- buffer complete body in memory in order to calculate Content-Length
-        local bodyParts = rawget(resp, "bodyParts")
-        table.insert(bodyParts, bodyPart)
-        resp.contentLength = resp.contentLength + #bodyPart
+        sendBuffer(bodyBuffer, conn, writeTimeout, true, false)
     end
 end
 
 local function writeFullBody(resp)
     local conn = resp.luaw_conn
     local writeTimeout = resp.writeTimeout
+    local bodyBuffer = resp.bodyParts
 
     if (resp.method == 'POST') then
         local encodedParams, contentLength = urlEncodeParams(resp.params)
         if encodedParams then
             resp:addHeader('Content-Type', 'application/x-www-form-urlencoded')
-            resp.bodyParts = encodedParams
-            resp.contentLength = contentLength
+            bodyBuffer:append(encodedParams)
         end
     end
 
-    --appendBody(resp, CRLF)
-    resp:addHeader('Content-Length', resp.contentLength)
+    resp:addHeader('Content-Length', bodyBuffer.len)
 
-    bufferAndWrite(resp:firstLine(), conn, writeTimeout, false, false)
-    writeHeaders(resp, conn, writeTimeout)
+    -- first write up to HTTP headers end
+    local headersBuffer = newBuffer()
+    headersBuffer:append(resp:firstLine())
+    bufferHeaders(resp.headers, headersBuffer)
+    sendBuffer(headersBuffer, conn, writeTimeout, false, true)
 
-    local bodyParts = rawget(resp, "bodyParts")
-    if (bodyParts) then
-        for i, bodyPart in ipairs(bodyParts) do
-            bufferAndWrite(bodyPart, conn, writeTimeout, false, false)
-        end
-    end
-
-    -- flush whatever is remaining in buffer
-    flushBuffer(conn, writeTimeout, false)
+    -- now write body
+    sendBuffer(bodyBuffer, conn, writeTimeout, false, true)
 end
 
 local function endStreaming(resp)
     local conn = resp.luaw_conn
     local writeTimeout = resp.writeTimeout
+    local bodyBuffer = resp.bodyParts
 
     -- flush whatever is remaining in write buffer
-    flushBuffer(conn, writeTimeout, true)
+    sendBuffer(bodyBuffer, conn, writeTimeout, true, true)
 
-    -- add chunk encoding trailer
-    bufferAndWrite("0\r\n\r\n", conn, writeTimeout, false, false)
-    flushBuffer(conn, writeTimeout, false)
+    -- add last chunk encoding trailer
+    conn:write("0\r\n\r\n", writeTimeout)
 end
 
 local function flush(resp)
@@ -662,17 +692,16 @@ connMT.startReading = function(self)
 end
 
 connMT.read = function(self, readTimeout)
-    local status, mesg = readInternal(self, Luaw.scheduler.tid(), readTimeout or DEFAULT_READ_TIMEOUT)
-    if ((status)and(mesg == 'WAIT')) then
+    local status, str = readInternal(self, Luaw.scheduler.tid(), readTimeout or DEFAULT_READ_TIMEOUT)
+    if ((status)and(not str)) then
         -- nothing in buffer, wait for libuv on_read callback
-        status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
+        status, str = coroutine.yield(TS_BLOCKED_EVENT)
     end
-    assert(status, mesg)
-    return mesg
+    return status, str
 end
 
-connMT.write = function(self, writeTimeout, isChunked)
-    local status, nwritten = writeInternal(self, Luaw.scheduler.tid(), writeTimeout  or DEFAULT_WRITE_TIMEOUT, isChunked)
+connMT.write = function(self, str, writeTimeout)
+    local status, nwritten = writeInternal(self, Luaw.scheduler.tid(), str, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
     if ((status)and(nwritten > 0)) then
         -- there is something to write, yield for libuv callback
         status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
@@ -686,7 +715,7 @@ local function reset(req)
     req["_acc_header_name_"] = nil
     req["_acc_header_value_"] = nil
     req.url = nil
-    req.bodyParts = {}
+    req.bodyParts:reset()
     req.body = nil
     req.luaw_mesg_done = nil
     req.luaw_headers_done = nil
@@ -701,16 +730,12 @@ Luaw.newServerHttpRequest = function(conn)
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
 	    headers = {},
-		bodyParts = {},
+		bodyParts = newBuffer(),
 	    luaw_parser = Luaw:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
-	    readAndParse = readAndParse,
 	    isComplete = isComplete,
-	    headersDone = headersDone,
-	    getParsedURL = getParsedURL,
 	    readFull = readFull,
-	    readStreaming = readStreaming,
 	    getBody = getBody,
 	    reset = reset,
 	    close = close
@@ -726,7 +751,7 @@ Luaw.newServerHttpResponse = function(conn)
         minor_version = 1,
         contentLength = 0,
         headers = {},
-        bodyParts = {},
+        bodyParts = newBuffer(),
         addHeader = addHeader,
         shouldCloseConnection = shouldCloseConnection,
         setStatus = setStatus,
@@ -745,17 +770,14 @@ local function newClientHttpResponse(conn)
 	    luaw_mesg_type = 'cresp',
 	    luaw_conn = conn,
 	    headers = {},
-		bodyParts = {},
+		bodyParts = newBuffer(),
 	    luaw_parser = Luaw:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    readAndParse = readAndParse,
-	    isComplete = isComplete,
-	    headersDone = headersDone,
 	    getBody = getBody,
 	    getStatus = getStatus,
 	    readFull = readFull,
-	    readStreaming = readStreaming,
 	    reset = reset,
 	    close = close
 	}
@@ -823,7 +845,7 @@ Luaw.newClientHttpRequest = function()
         method = 'GET',
         contentLength = 0,
         headers = {},
-		bodyParts = {},
+		bodyParts = newBuffer(),
         addHeader = addHeader,
         connect = connectReq,
         execute = execute,
