@@ -127,6 +127,8 @@ void init_luaw_server(lua_State* L) {
         exit(EXIT_FAILURE);
     }
 
+    lua_pop(L, 1);  //pop Luaw object
+
     lua_getglobal(L, "luaw_server_config");
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "server_ip");
@@ -141,8 +143,11 @@ void init_luaw_server(lua_State* L) {
             lua_pop(L, 1);
         }
 
-        lua_pop(L, 1);
+        lua_pop(L, 1);  //pop luaw_server_config object
     }
+
+    lua_pushnumber(L, CONN_BUFFER_SIZE);
+    lua_setglobal(L, "CONN_BUFFER_SIZE");
 
     event_loop = uv_default_loop();
 }

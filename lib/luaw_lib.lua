@@ -185,18 +185,13 @@ local function append(buffer, str)
         len = len + #str
         buffer.len = len
     end
-    return (len >= buffer.limit)
-end
-
-local function isOverLimit(buffer)
-    return (buffer.len >= buffer.limit)
+    return len
 end
 
 local substr = string.sub
 
 -- returns remaining str, chunk
-local function allowLastChunkPartialIterator(buffer, str)
-	local limit = buffer.limit
+local function allowLastChunkPartialIterator(limit, str)
     if (str == '') then
         return nil
     end
@@ -213,28 +208,28 @@ local function onlyFullLengthChunksIterator(buffer, str)
 	end
 	if (#str < limit) then
 		buffer:append(str)
+		buffer.limit = nil
 		return nil
 	end
     return substr(str, limit+1), substr(str, 1, limit)
 end
 
-local function chunk(buffer, flush)
+local function chunk(buffer, limit, flush)
 	local str = table.concat(buffer)
 	buffer:reset()
 	if (flush) then
-		return allowLastChunkPartialIterator, buffer, str
+		return allowLastChunkPartialIterator, limit, str
 	end
+	buffer.limit = limit
 	return onlyFullLengthChunksIterator, buffer, str
 end
 
-local function newBuffer(limit)
+local function newBuffer()
     return {
         len = 0,
-        limit = limit or CONN_BUFFER_SIZE,
         reset = reset,
         concat = concat,
         append = append,
-        isOverLimit = isOverLimit,
         chunk = chunk
     }
 end
@@ -560,7 +555,13 @@ local function firstRequestLine(req)
 end
 
 local function sendBuffer(buffer, conn, writeTimeout, isChunked, flush)
-    for str, chunk in buffer:chunk(flush) do
+    local limit = CONN_BUFFER_SIZE
+    if (isChunked) then
+        -- account for chunk header and trailer length
+        limit = limit - 8
+    end
+
+    for str, chunk in buffer:chunk(limit, flush) do
         if (isChunked) then
             chunk = string.format("%04x\r\n", #chunk)..chunk..CRLF
         end
@@ -598,9 +599,6 @@ local function startStreaming(resp)
     local headers = resp.headers
     local conn = resp.luaw_conn
     local writeTimeout = resp.writeTimeout
-    -- account for chunk header and trailer length
-    local limit = resp.bodyParts.limit
-    resp.bodyParts.limit = limit - 8
 
     -- use separate buffer from "bodyParts" to serialize headers
     local headersBuffer = newBuffer()
