@@ -28,6 +28,8 @@ local DIR_SEPARATOR = string.match (package.config, "[^\n]+")
 local STRING_PATH_PARAM = { start = string.byte(":"), valueOf = tostring }
 local NUM_PATH_PARAM = { start = string.byte("#"), valueOf = tonumber }
 
+TAB = '    '
+
 local function findFiles(path, pattern, matches)
     if (path and pattern) then
         for file in lfs.dir(path) do

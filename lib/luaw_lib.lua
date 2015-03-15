@@ -37,6 +37,18 @@ local CONN_BUFFER_SIZE = luaw_server_config.connection_buffer_size or 4096
 EOF = 0
 CRLF = '\r\n'
 
+local MULTIPART_BEGIN = "MULTIPART_BEGIN"
+local PART_BEGIN = "PART_BEGIN"
+local PART_DATA = "PART_DATA"
+local PART_END = "PART_END"
+local MULTIPART_END = "MULTIPART_END"
+
+Luaw.MULTIPART_BEGIN = MULTIPART_BEGIN
+Luaw.PART_BEGIN = PART_BEGIN
+Luaw.PART_DATA = PART_DATA
+Luaw.PART_END = PART_END
+Luaw.MULTIPART_END = MULTIPART_END
+
 local function tprint(tbl, indent, tab)
   for k, v in pairs(tbl) do
     if type(v) == "table" then
@@ -203,7 +215,7 @@ end
 
 local function onlyFullLengthChunksIterator(buffer, str)
 	local limit = buffer.limit
-	if (str == '') then
+	if ((not str)or(str == '')) then
 		return nil
 	end
 	if (#str < limit) then
@@ -345,6 +357,27 @@ local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, h
 	req.minor_version = httpMinor
     req.method = method
     req.status = status
+
+    -- parse URL
+    local url = req.url
+    local parsedURL
+    if url then
+        local method = req.method
+        parsedURL = Luaw.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
+    else
+        parsedURL = {}
+    end
+    req.parsedURL = parsedURL
+
+    -- GET query params
+    local params = {}
+    local queryString = parsedURL.queryString
+    if queryString then
+        assert(Luaw:urlDecode(queryString, params))
+    end
+    req.params = params
+
+    req.luaw_headers_done = true
 end
 
 local function onBody(req, cbtype, remaining, chunk)
@@ -366,30 +399,14 @@ local function onMesgComplete(req, cbtype, remaining, keepAlive)
     req.body = bodyParts:concat()
     bodyParts:reset()
 
-    -- parse URL
-    local url = req.url
-    local parsedURL
-    if url then
-        local method = req.method
-        parsedURL = Luaw.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
-    else
-        parsedURL = {}
-    end
-    req.parsedURL = parsedURL
-
-    local params = {}
     -- POST form params
+    local params = req.params
     local contentType = req.headers['Content-Type']
     if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
         assert(Luaw:urlDecode(req.body, params))
     end
 
-    -- GET query params
-    local queryString = parsedURL.queryString
-    if queryString then
-        assert(Luaw:urlDecode(queryString, params))
-    end
-    req.params = params
+    req.luaw_mesg_done = true
 end
 
 -- Order is important and must match C enum http_parser_cb_type
@@ -424,50 +441,247 @@ local function parseHttpFragment(req, conn, parser, content, offset)
     return  cbtype, offset
 end
 
-local function readFull(req)
+local function hasContent(content, offset)
+    return (content)and(offset)and(offset < #content)
+end
+
+local function notReachedCB(httpcb, stopcb)
+    return (stopcb)and(httpcb < stopcb)
+end
+
+local function readAndParse(req, stopcb)
     local conn = req.luaw_conn
     local parser = req.luaw_parser
     local content = req.luaw_read_content
     local offset = req.luaw_read_offset
     local status
-    local http_callback = 0
+    local httpcb = 0
 
-    while (http_callback ~= 9) do   --http_cb_on_mesg_complete == 9
-        if ((content)and(offset)and(offset < #content)) then
-            -- leftover content from last read after HTTP message was complete. Possibly pipelined HTTP request
-            status = true
-            req.luaw_read_content = nil     --GC
-            req.lua_read_offset = nil
-        else
+    while (notReachedCB(httpcb, stopcb) or hasContent(content, offset)) do
+        if (not hasContent(content, offset)) then
             -- read new content from socket
             status, content = conn:read(req.readTimeout)
+            if (not status) then
+                if (content == 'EOF') then
+                    req:addHeader('Connection', 'close')
+                    req.luaw_read_content = nil
+                    req.luaw_read_offset = nil
+                    req.luaw_headers_done = true
+                    req.luaw_mesg_done = true
+                    req.EOF = true
+                    return true; -- EOF, client closed connection
+                else
+                    return error(content)
+                end
+            end
             offset = 0 -- offset is for C, therefore zero based
         end
+        httpcb, offset = parseHttpFragment(req, conn, parser, content, offset)
+    end
 
-        if (not status) then
-            if (content == 'EOF') then
-                req:addHeader('Connection', 'close')
-                req.EOF = true
-                return true; -- EOF, client closed connection
-            else
-                return error(content)
+    if (hasContent(content,offset)) then
+        -- store back remaining content in request object for next HTTP request parsing
+        req.luaw_read_content = content
+        req.luaw_read_offset = offset
+    else
+        req.luaw_read_content = nil
+        req.luaw_read_offset = nil
+    end
+    return false
+end
+
+local function consumeTill(input, search, offset)
+    local start, stop = string.find(input, search, offset, true)
+    if (start and stop) then
+        return stop+1, string.sub(input, offset, start-1)
+    end
+end
+
+local function getMultipartBoundary(req)
+    local header = req.headers['Content-Type']
+    if (header) then
+        local offset, contentType = consumeTill(header, ";", 1)
+        if (contentType == "multipart/form-data") then
+            local boundary
+            offset, boundary = consumeTill(header, "=", offset)
+            if ((boundary)and(string.find(boundary, "boundary", 1, true))) then
+                return '--'..string.sub(header, offset)
             end
         end
+    end
+end
 
-        while ((http_callback ~= 9)and(offset < #content)) do
-            http_callback, offset = parseHttpFragment(req, conn, parser, content, offset)
-        end
+local function isMultipart(req)
+    if (req.luaw_multipart_boundary) then
+        return true
+    end
 
-        if (offset < #content) then
-            -- read content remaining but HTTP message end reached. Possibly pipelined HTTP requests case
-            -- store back remaining content in request object for next HTTP request parsing
-            req.luaw_read_str = content
-            req.luaw_read_offset = offset
+    local boundary = getMultipartBoundary(req)
+    if (boundary) then
+        req.luaw_multipart_boundary = boundary
+        req.luaw_multipart_end = boundary .. '--'
+        return true
+    end
+    return false
+end
+
+local function readFull(req)
+    local eof = req:readAndParse(7)   -- parse till headers are done
+    if ((eof)or(req.luaw_mesg_done)) then
+        return eof
+    end
+    if (isMultipart(req)) then
+        -- multipart (file upload) HTTP requests are forced to be streaming to conserve memory
+        return eof;
+    end
+    return req:readAndParse(9)   -- onMesgComplete == 9
+end
+
+local function consumeBodyChunkParsed(req)
+    local bodyChunk = req.body
+
+    if (bodyChunk) then
+        req.body = nil
+        return bodyChunk
+    else
+        local bodyParts = req.bodyParts
+        if (bodyParts.len > 0) then
+            readStr = bodyParts:concat()
+            bodyParts:reset()
         end
     end
 
-    req.EOF = false
-    return false    --HTTP message complete, no EOF
+    return bodyChunk
+end
+
+local function bufferedConsume(req, search, content, offset)
+    assert(search, "search pattern cannot be nil")
+
+    while (true) do
+        if ((content)and(#content > offset)) then
+            local matchPos, matchStr  = consumeTill(content, search, offset)
+            if (matchPos) then
+                -- found match
+                if (matchPos < #content) then
+                    -- there is content remaining
+                    return matchStr, content, matchPos
+                end
+                -- content fully consumed
+                return matchStr, nil, nil
+            end
+
+            if (offset > 1) then
+                content = string.sub(content, offset)
+                offset = 1
+            end
+        end
+
+        -- match not found, read more
+        req:readAndParse()
+        local readStr = consumeBodyChunkParsed(req)
+        if (not readStr) then
+            error("EOF reached")
+        end
+
+        if (content) then
+            content = content..readStr
+        else
+            content = readStr
+            offset = 1
+        end
+    end
+end
+
+local function saveState(req, content, offset)
+    req.luaw_multipart_content = content
+    req.luaw_multipart_offset = offset
+end
+
+function fetchNextPart(req, state)
+    local content = req.luaw_multipart_content
+    local offset = req.luaw_multipart_offset or 1
+    local boundary = req.luaw_multipart_boundary
+    local matchStr
+
+    if (state == MULTIPART_BEGIN) then
+        -- read beginning boundary
+        matchedStr, content, offset = bufferedConsume(req, CRLF, content, offset)
+        assert(matchedStr == boundary, "Missing multi-part boundary at the beginning of the part")
+        state = PART_END
+    end
+
+    if (state == PART_END) then
+        -- read "Content-Disposition" line
+        matchedStr, content, offset = bufferedConsume(req, ": ", content, offset)
+        assert(matchedStr == 'Content-Disposition',"Missing 'Content-Disposition' header")
+
+        matchedStr, content, offset = bufferedConsume(req, "; ", content, offset)
+        assert(string.find(matchedStr, 'form-data', 1, true), "Wrong Content-Disposition")
+
+        matchedStr, content, offset = bufferedConsume(req, '"', content, offset)
+        assert(string.find(matchedStr, "name", 1, true), "form field name missing")
+
+        local fieldName
+        fieldName, content, offset = bufferedConsume(req, '"', content, offset)
+        assert(#fieldName > 0, "form field name missing")
+
+        matchedStr, content, offset = bufferedConsume(req, CRLF, content, offset)
+        local _, filenamePos = string.find(matchedStr, 'filename="', 1, true)
+        local fileName
+        if (filenamePos) then
+            fileName = string.sub(matchedStr, filenamePos+1, #matchedStr-1)
+        end
+
+        local contentType
+        if (fileName) then
+            -- read "Content-Type" line
+            matchedStr, content, offset = bufferedConsume(req, ": ", content, offset)
+            assert(matchedStr == 'Content-Type', "Missing 'Content-Type' header")
+
+            contentType, content, offset = bufferedConsume(req, CRLF, content, offset)
+            assert(#contentType, "Content-Type value missing")
+        end
+
+        -- read next blank line
+        matchedStr, content, offset = bufferedConsume(req, CRLF, content, offset)
+        assert(#matchedStr == 0, "Missing line separating content headers and actual content")
+
+        saveState(req, content, offset)
+        return PART_BEGIN, fieldName, fileName, contentType
+    end
+
+    while ((state == PART_BEGIN)or(state == PART_DATA)) do
+        local matchedStr, content, offset = bufferedConsume(req, CRLF, content, offset)
+        if (matchedStr) then
+            if (matchedStr == boundary) then
+                saveState(req, content, offset)
+                return PART_END
+            end
+
+            local lastBoundary = req.luaw_multipart_end
+            if (matchedStr == lastBoundary) then
+                saveState(req, content, offset)
+                return MULTIPART_END
+            end
+
+            saveState(req, content, offset)
+            return PART_DATA, matchedStr
+        else
+            local content = req.luaw_multipart_content
+            local offset = req.luaw_consumed_till or 0
+
+            if ((content)and(#content-offset) > #boundary+3) then
+                saveState(req, nil, 1)
+                return PART_DATA, content
+            end
+        end
+    end
+end
+
+local function multiPartIterator(req)
+    if (isMultipart(req)) then
+        return fetchNextPart, req, MULTIPART_BEGIN
+    end
 end
 
 local function shouldCloseConnection(req)
@@ -733,7 +947,10 @@ Luaw.newServerHttpRequest = function(conn)
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    isComplete = isComplete,
+	    readAndParse = readAndParse,
 	    readFull = readFull,
+	    isMultipart = isMultipart,
+	    multiPartIterator = multiPartIterator,
 	    getBody = getBody,
 	    reset = reset,
 	    close = close
