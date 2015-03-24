@@ -527,12 +527,9 @@ end
 
 local function readFull(req)
     local eof = req:readAndParse(7)   -- parse till headers are done
-    if ((eof)or(req.luaw_mesg_done)) then
-        return eof
-    end
-    if (isMultipart(req)) then
+    if ((eof)or(req.luaw_mesg_done)or(isMultipart(req))) then
         -- multipart (file upload) HTTP requests are forced to be streaming to conserve memory
-        return eof;
+        return eof
     end
     return req:readAndParse(9)   -- onMesgComplete == 9
 end
