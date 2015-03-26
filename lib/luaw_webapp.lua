@@ -22,6 +22,18 @@ SOFTWARE.
 
 local Luaw = require("luaw_lib")
 
+local HTTP_METHODS = {
+    GET = "GET",
+    POST = "POST",
+    PUT = "PUT",
+    DELETE = "DELETE",
+    HEAD = "HEAD",
+    OPTIONS = "OPTIONS",
+    TRACE = "TRACE",
+    CONNECT = "CONNECT",
+    SERVICE = "SERVICE"
+}
+
 local registeredWebApps = {}
 
 local DIR_SEPARATOR = string.match (package.config, "[^\n]+")
@@ -194,7 +206,7 @@ local function dispatchAction(req, resp)
         resp.headers['Connection'] = 'Keep-Alive'
     end
 
-    v1, v2 = action.action(req, resp, pathParams)
+    v1, v2 = action.handler(req, resp, pathParams)
 
     -- handle action returned response, if any
     if v1 then
@@ -228,8 +240,16 @@ local function dispatchAction(req, resp)
     resp:flush()
 end
 
-local function registerAction(webapp, method, path, action)
-    local route = webapp.root
+local function registerResource(resource)
+    local route = assert(webapp.root, "webapp root not defined")
+    local path = assert(resource.path , "Handler definition is missing value for 'path'")
+    local handlerFn = assert(resource.handler, "Handler definition is missing 'handler' function")
+    local method = resource.method or 'SERVICE'
+    if(not HTTP_METHODS[method]) then
+        error(method.." is not a valid HTTP method")
+    end
+
+
     for idx, pseg in splitPath(path) do
         local firstChar = string.byte(pseg)
         local pathParam = nil
@@ -254,77 +274,9 @@ local function registerAction(webapp, method, path, action)
         route = nextRoute
     end
 
-    assert(route, "Could not register action "..path)
-    assert((not route[method]), 'Action already registered for '..method..' for path "/'..webapp.path..'/'..path..'"')
-    action.action = action[1]
-    action[1] = nil
-    route[method] = action
-end
-
-function get(path)
-    return function(route)
-        registerAction(webapp, 'GET', path, route)
-    end
-end
-
-function post(path)
-    return function(route)
-        registerAction(webapp, 'POST', path, route)
-    end
-end
-
-function put(path)
-    return function(route)
-        registerAction(webapp, 'PUT', path, route)
-    end
-end
-
-function delete(path)
-    return function(route)
-        registerAction(webapp, 'DELETE', path, route)
-    end
-end
-
-function head(path)
-    return function(route)
-        registerAction(webapp, 'HEAD', path, route)
-    end
-end
-
-function options(webapp, path)
-    return function(route)
-        registerAction(webapp, 'OPTIONS', path, route)
-    end
-end
-
-function trace(path)
-    return function(route)
-        registerAction(webapp, 'TRACE', path, route)
-    end
-end
-
-function connect(path)
-    return function(route)
-        registerAction(webapp, 'CONNECT', path, route)
-    end
-end
-
-function service(path)
-    return function(route)
-        registerAction(webapp, 'SERVICE', path, route)
-    end
-end
-
-local function declareHTTPglobals()
-    GET = get
-    POST = post
-    PUT = put
-    DELETE = delete
-    HEAD = head
-    OPTIONS = options
-    TRACE = trace
-    CONNECT = connect
-    SERVICE = service
+    assert(route, "Could not register handler for path "..path)
+    assert((not route[method]), 'Handler already registered for '..method..' for path "/'..webapp.path..'/'..path..'"')
+    route[method] = {handler = handlerFn}
 end
 
 local function serviceHTTP(conn)
@@ -440,8 +392,8 @@ local function startWebApp(app)
     local resources = app.resources
     for i,resource in ipairs(resources) do
         Luaw.formattedLine(".Loading resource "..resource)
-        -- declare global HTTP methods and webapp for the duration of the loadfile(resource)
-        declareHTTPglobals()
+        -- declare globals (registerHandler and webapp) for the duration of the loadfile(resource)
+        registerHandler = registerResource
         webapp = app
         local routeDefn = assert(loadfile(resource), string.format("Could not load resource %s", resource))
         routeDefn()

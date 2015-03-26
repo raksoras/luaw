@@ -1,5 +1,8 @@
-GET 'showform' {
-	function(req, resp, pathParams)
+registerHandler {
+    method = 'GET',
+    path = 'showform',
+
+	handler = function(req, resp, pathParams)
 	    return [[
             <!DOCTYPE html>
             <html lang="en">

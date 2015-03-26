@@ -1,5 +1,8 @@
-GET 'helloworld' {
-    function(req, resp, pathParams)
+registerHandler {
+    method = 'GET',
+    path = 'helloworld',
+
+    handler = function(req, resp, pathParams)
         return "Hello World!"
     end
 }

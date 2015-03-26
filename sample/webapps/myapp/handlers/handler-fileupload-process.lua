@@ -5,8 +5,12 @@ local function append(buffer, str)
     end
 end
 
-POST 'filesupload' {
-	function(req, resp, pathParams)
+
+registerHandler {
+    method = 'POST',
+    path = 'filesupload',
+
+	handler = function(req, resp, pathParams)
 	    if (req:isMultipart()) then
             local token, fieldName, fileName, contentType
             local buffer = {}
