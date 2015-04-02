@@ -287,8 +287,8 @@ local function serviceHTTP(conn)
         local req = Luaw.newServerHttpRequest(conn)
 
         -- read and parse full request
-        local status, eof = pcall(req.readFull, req)
-        if ((not status)or(eof)) then
+        local status = pcall(req.readFull, req)
+        if ((not status)or(req.EOF == true)) then
             conn:close()
             if (status) then
                 return "read time out"

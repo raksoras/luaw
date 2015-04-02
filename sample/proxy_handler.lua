@@ -1,9 +1,9 @@
 --[[
-    Luaw allows you to replace it's default MVC/REST request handler with your own custom HTTP 
-request handler implementation. To override the default HTTP request handler just set Luaw object's 
-request_handler property to your custom Lua function. This function is passed in a low level connection 
-object for each incoming request instead of the normal request and response objects passed to REST handler. 
-The function is called on its own separate Luaw coroutine for each HTTP request so you don't have to worry 
+    Luaw allows you to replace it's default MVC/REST request handler with your own custom HTTP
+request handler implementation. To override the default HTTP request handler just set Luaw object's
+request_handler property to your custom Lua function. This function is passed in a low level connection
+object for each incoming request instead of the normal request and response objects passed to REST handler.
+The function is called on its own separate Luaw coroutine for each HTTP request so you don't have to worry
 about multithreaded access to shared state inside the function.
 ]]
 
@@ -16,8 +16,8 @@ Luaw.request_handler =  function(conn)
         local resp = Luaw.newServerHttpResponse(conn)
 
         -- read and parse full request
-        local eof = req:readFull()
-        if (eof) then
+        req:readFull()
+        if (req.EOF) then
             conn:close()
             return "connection reset by peer"
         end

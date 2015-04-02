@@ -85,11 +85,10 @@ static void be64(const char* in, char* out) {
     }
 }
 
-static int number_to_lua(lua_State* L, int read_len, double value, int desired_len) {
+static int number_to_lua(lua_State* L, int read_len, double value) {
     lua_pushinteger(L, read_len);
     lua_pushnumber(L, value);
-    lua_pushnumber(L, desired_len);
-    return 3;
+    return 2;
 }
 
 LUA_LIB_METHOD int read_number(lua_State* L) {
@@ -110,61 +109,61 @@ LUA_LIB_METHOD int read_number(lua_State* L) {
         case UINT_8:
         case STRING:
         case DICT_ENTRY:
-            if (remaining < 1) return number_to_lua(L, 0, 0, 1);
+            if (remaining < 1) return number_to_lua(L, 0, 0);
             uint8_t u = buff[0];
-            return number_to_lua(L, 1, u, 0);
+            return number_to_lua(L, 1, u);
 
         case UINT_16:
         case BIG_STRING:
         case BIG_DICT_ENTRY:
-            if (remaining < 2) return number_to_lua(L, 0, 0, 2);
+            if (remaining < 2) return number_to_lua(L, 0, 0);
             uint16_t u16;
             be16(buff, (char *)&u16);
-            return number_to_lua(L, 2, u16, 0);
+            return number_to_lua(L, 2, u16);
 
         case UINT_32:
         case HUGE_STRING:
-            if (remaining < 4) return number_to_lua(L, 0, 0, 4);
+            if (remaining < 4) return number_to_lua(L, 0, 0);
             uint32_t u32;
             be32(buff, (char *)&u32);
-            return number_to_lua(L, 4, u32, 0);
+            return number_to_lua(L, 4, u32);
 
         case INT_8:
-            if (remaining < 1) return number_to_lua(L, 0, 0, 1);
+            if (remaining < 1) return number_to_lua(L, 0, 0);
             int8_t i = buff[0];
-            return number_to_lua(L, 1, i, 0);
+            return number_to_lua(L, 1, i);
 
         case INT_16:
-            if (remaining < 2) return number_to_lua(L, 0, 0, 2);
+            if (remaining < 2) return number_to_lua(L, 0, 0);
             int16_t i16;
             be16(buff, (char *)&i16);
-            return number_to_lua(L, 2, i16, 0);
+            return number_to_lua(L, 2, i16);
 
         case INT_32:
-            if (remaining < 4) return number_to_lua(L, 0, 0, 4);
+            if (remaining < 4) return number_to_lua(L, 0, 0);
             int32_t i32;
             be32(buff, (char *)&i32);
-            return number_to_lua(L, 4, i32, 0);
+            return number_to_lua(L, 4, i32);
 
         case INT_64:
-            if (remaining < 8) return number_to_lua(L, 0, 0, 8);
+            if (remaining < 8) return number_to_lua(L, 0, 0);
             int64_t i64;
             be64(buff, (char *)&i64);
-            return number_to_lua(L, 8, i64, 0);
+            return number_to_lua(L, 8, i64);
 
         case FLOAT:
             sz = sizeof(float);
-            if (remaining < sz) return number_to_lua(L, 0, 0, sz);
+            if (remaining < sz) return number_to_lua(L, 0, 0);
             float f;
             be32(buff, (char *)&f);
-            return number_to_lua(L, sz, f, 0);
+            return number_to_lua(L, sz, f);
 
         case DOUBLE:
             sz = sizeof(double);
-            if (remaining < sz) return number_to_lua(L, 0, 0, sz);
+            if (remaining < sz) return number_to_lua(L, 0, 0);
             double d;
             be64(buff, (char *)&d);
-            return number_to_lua(L, sz, d, 0);
+            return number_to_lua(L, sz, d);
 
         default:
             return luaL_error(L, "Invalid marker %d specified", num_type);
@@ -359,21 +358,6 @@ LUA_LIB_METHOD int serialize_write_Q(lua_State* L) {
                 luaL_addlstring (&buff, sval, len);
                 break;
 
-            case DICT_URL:
-                sval = fetch_next_as_string(L, &len, &idx, "DICT_URL");
-                luaL_addchar(&buff, (uint8_t)len);
-                luaL_addlstring (&buff, sval, len);
-                break;
-
-            case BIG_DICT_URL:
-                sval = fetch_next_as_string(L, &len, &idx, "BIG_DICT_URL");
-                u16 = (uint16_t)len;
-                obuff = luaL_prepbuffsize(&buff, sizeof(uint16_t));
-                be16((char *)&u16, obuff);
-                luaL_addsize(&buff, sizeof(uint16_t));
-                luaL_addlstring (&buff, sval, len);
-                break;
-
             default:
                 return luaL_error(L, "Invalid marker %d encountered", marker);
         }
@@ -435,9 +419,6 @@ static void define_lapck_types(lua_State* L) {
     LPACK_ENUM_DEF(L, STRING, sizeof(uint8_t), 0, UINT8_MAX);
     LPACK_ENUM_DEF(L, BIG_STRING, sizeof(uint16_t), 0, UINT16_MAX);
     LPACK_ENUM_DEF(L, HUGE_STRING, sizeof(uint32_t), 0, UINT32_MAX);
-
-    LPACK_ENUM_DEF(L, DICT_URL, sizeof(uint8_t), 0, UINT8_MAX);
-    LPACK_ENUM_DEF(L, BIG_DICT_URL, sizeof(uint16_t), 0, UINT16_MAX);
 }
 
 LUA_LIB_METHOD int new_lpack_parser(lua_State* L) {

@@ -445,39 +445,33 @@ local function hasContent(content, offset)
     return (content)and(offset)and(offset < #content)
 end
 
-local function notReachedCB(httpcb, stopcb)
-    return (stopcb)and(httpcb < stopcb)
-end
-
-local function readAndParse(req, stopcb)
+local function readAndParse(req)
     local conn = req.luaw_conn
     local parser = req.luaw_parser
     local content = req.luaw_read_content
     local offset = req.luaw_read_offset
-    local status
-    local httpcb = 0
+    local httpcb, status
 
-    while (notReachedCB(httpcb, stopcb) or hasContent(content, offset)) do
-        if (not hasContent(content, offset)) then
-            -- read new content from socket
-            status, content = conn:read(req.readTimeout)
-            if (not status) then
-                if (content == 'EOF') then
-                    req:addHeader('Connection', 'close')
-                    req.luaw_read_content = nil
-                    req.luaw_read_offset = nil
-                    req.luaw_headers_done = true
-                    req.luaw_mesg_done = true
-                    req.EOF = true
-                    return true; -- EOF, client closed connection
-                else
-                    return error(content)
-                end
+    if (not hasContent(content, offset)) then
+        -- read new content from socket
+        status, content = conn:read(req.readTimeout)
+        if (not status) then
+            if (content == 'EOF') then
+                req:addHeader('Connection', 'close')
+                req.luaw_read_content = nil
+                req.luaw_read_offset = nil
+                req.luaw_headers_done = true
+                req.luaw_mesg_done = true
+                req.EOF = true
+                return
+            else
+                return error(content)
             end
-            offset = 0 -- offset is for C, therefore zero based
         end
-        httpcb, offset = parseHttpFragment(req, conn, parser, content, offset)
+        offset = 0 -- offset is for C, therefore zero based
     end
+
+    httpcb, offset = parseHttpFragment(req, conn, parser, content, offset)
 
     if (hasContent(content,offset)) then
         -- store back remaining content in request object for next HTTP request parsing
@@ -487,7 +481,6 @@ local function readAndParse(req, stopcb)
         req.luaw_read_content = nil
         req.luaw_read_offset = nil
     end
-    return false
 end
 
 local function consumeTill(input, search, offset)
@@ -522,32 +515,42 @@ local function isMultipart(req)
         req.luaw_multipart_end = boundary .. '--'
         return true
     end
-    return false
+end
+
+local function isLuaPackMesg(req)
+    local contentType = req.headers['Content-Type']
+    if ('application/luapack' == contentType) then
+        return true
+    end
 end
 
 local function readFull(req)
-    local eof = req:readAndParse(7)   -- parse till headers are done
-    if ((eof)or(req.luaw_mesg_done)or(isMultipart(req))) then
-        -- multipart (file upload) HTTP requests are forced to be streaming to conserve memory
-        return eof
+    -- first parse till headers are done
+    while (not req.luaw_headers_done) do
+        req:readAndParse()
     end
-    return req:readAndParse(9)   -- onMesgComplete == 9
+
+    if ((isMultipart(req))or(isLuaPackMesg(req))) then
+        -- multipart (file upload) HTTP requests and LuaPack requests are forced to be streaming to conserve memory
+        return
+    end
+
+    while (not req.luaw_mesg_done) do
+        req:readAndParse()
+    end
 end
 
 local function consumeBodyChunkParsed(req)
     local bodyChunk = req.body
-
     if (bodyChunk) then
         req.body = nil
-        return bodyChunk
     else
         local bodyParts = req.bodyParts
         if (bodyParts.len > 0) then
-            readStr = bodyParts:concat()
+            bodyChunk = bodyParts:concat()
             bodyParts:reset()
         end
     end
-
     return bodyChunk
 end
 
@@ -575,16 +578,18 @@ local function bufferedConsume(req, search, content, offset)
 
         -- match not found, read more
         req:readAndParse()
-        local readStr = consumeBodyChunkParsed(req)
-        if (not readStr) then
-            error("EOF reached")
+        if (req.luaw_mesg_done) then
+            error("premature HTTP message end")
         end
 
-        if (content) then
-            content = content..readStr
-        else
-            content = readStr
-            offset = 1
+        local readStr = req:consumeBodyChunkParsed()
+        if (readStr) then
+            if (content) then
+                content = content..readStr
+            else
+                content = readStr
+                offset = 1
+            end
         end
     end
 end
@@ -950,6 +955,7 @@ Luaw.newServerHttpRequest = function(conn)
 	    multiPartIterator = multiPartIterator,
 	    getBody = getBody,
 	    reset = reset,
+	    consumeBodyChunkParsed = consumeBodyChunkParsed,
 	    close = close
 	}
     return req;
@@ -990,6 +996,7 @@ local function newClientHttpResponse(conn)
 	    getBody = getBody,
 	    getStatus = getStatus,
 	    readFull = readFull,
+	    consumeBodyChunkParsed = consumeBodyChunkParsed,
 	    reset = reset,
 	    close = close
 	}
@@ -1038,15 +1045,6 @@ local function execute(req)
     return resp
 end
 
-local function execute(req)
-    local resp = req:connect()
-    req:flush()
-    resp:readFull()
-    if resp:shouldCloseConnection() then
-        resp:close()
-    end
-    return resp
-end
 
 Luaw.newClientHttpRequest = function()
     local req = {

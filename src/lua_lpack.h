@@ -57,9 +57,7 @@ typedef enum {
     /* variable length types */
     STRING,
     BIG_STRING,
-    HUGE_STRING,
-    DICT_URL,
-    BIG_DICT_URL
+    HUGE_STRING
 }
 type_tag;
 
