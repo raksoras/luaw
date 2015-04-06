@@ -788,9 +788,9 @@ local function appendBody(resp, bodyPart)
     end
 
     local bodyBuffer = resp.bodyParts
-    local isfull = bodyBuffer:append(bodyPart)
+    local len = bodyBuffer:append(bodyPart)
 
-    if (resp.luaw_is_chunked and isfull) then
+    if ((resp.luaw_is_chunked)and(len >= CONN_BUFFER_SIZE)) then
         local conn = resp.luaw_conn
         local writeTimeout = resp.writeTimeout
         sendBuffer(bodyBuffer, conn, writeTimeout, true)
