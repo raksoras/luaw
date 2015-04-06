@@ -203,6 +203,7 @@ static double fetch_next_as_integer(lua_State* L, int* idx, const char* s) {
     }
     int i = lua_tointeger(L, -1);
     *idx = *idx + 1;
+    lua_pop(L, 1);
     return i;
 }
 
