@@ -169,12 +169,6 @@ static void stop_timer(uv_timer_t* timer) {
     }
 }
 
-// LUA_OBJ_METHOD static int reset_read_buffer(lua_State* l_thread) {
-//     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-//     clear_read_buffer(conn);
-//     return 0;
-// }
-
 LUA_OBJ_METHOD static int close_connection_lua(lua_State* l_thread) {
     LUA_GET_CONN_OR_RETURN(l_thread, 1, conn);
 
@@ -338,17 +332,13 @@ LUA_OBJ_METHOD static int write_buffer(lua_State* l_thread) {
 
     size_t len = 0;
     const char* buff = lua_tolstring(l_thread, 3, &len);
-    if (len > CONN_BUFFER_SIZE) {
-        return error_to_lua(l_thread, "write() called with string of size %d > buffer size %d", len, CONN_BUFFER_SIZE);
-    }
 
     if (len > 0) {
         /* non empty write buffer. Send write request, record writer tid and block in lua */
         int writeTimeout = lua_tointeger(l_thread, 4);
 
         uv_buf_t write_buff;
-        memcpy(conn->write_buffer, buff, len);
-        write_buff.base = conn->write_buffer;
+        write_buff.base = (char*) buff;
         write_buff.len = len;
 
         int err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, &write_buff, 1, on_write);

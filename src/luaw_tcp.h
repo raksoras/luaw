@@ -48,9 +48,8 @@ struct connection_s {
     int ref_count;                          /* reference count */
     connection_t** lua_ref;                 /* back reference to Lua's full userdata pointing to this conn */
 
-    /* read-write buffers */
+    /* read buffer */
     char read_buffer[CONN_BUFFER_SIZE];     /* buffer to read into */
-    char write_buffer[CONN_BUFFER_SIZE];    /* buffer to write from */
 };
 
 #define MAX_CONNECTION_BUFF_SIZE 65536  //16^4

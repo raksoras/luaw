@@ -214,6 +214,7 @@ static double fetch_next_as_double(lua_State* L, int* idx, const char* s) {
     }
     double d = lua_tonumber(L, -1);
     *idx = *idx + 1;
+    lua_pop(L, 1);
     return d;
 }
 
@@ -224,6 +225,7 @@ static const char* fetch_next_as_string(lua_State* L, size_t *len, int* idx, con
         luaL_error(L, "Invalid value found where %s was expected", s);
     }
     *idx = *idx + 1;
+    lua_pop(L, 1);
     return val;
 }
 

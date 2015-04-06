@@ -200,49 +200,12 @@ local function append(buffer, str)
     return len
 end
 
-local substr = string.sub
-
--- returns remaining str, chunk
-local function allowLastChunkPartialIterator(limit, str)
-    if (str == '') then
-        return nil
-    end
-    if (#str <= limit) then
-        return '', str
-    end
-    return substr(str, limit+1), substr(str, 1, limit)
-end
-
-local function onlyFullLengthChunksIterator(buffer, str)
-	local limit = buffer.limit
-	if ((not str)or(str == '')) then
-		return nil
-	end
-	if (#str < limit) then
-		buffer:append(str)
-		buffer.limit = nil
-		return nil
-	end
-    return substr(str, limit+1), substr(str, 1, limit)
-end
-
-local function chunk(buffer, limit, flush)
-	local str = table.concat(buffer)
-	buffer:reset()
-	if (flush) then
-		return allowLastChunkPartialIterator, limit, str
-	end
-	buffer.limit = limit
-	return onlyFullLengthChunksIterator, buffer, str
-end
-
 local function newBuffer()
     return {
         len = 0,
         reset = reset,
         concat = concat,
-        append = append,
-        chunk = chunk
+        append = append
     }
 end
 
@@ -770,19 +733,13 @@ local function firstRequestLine(req)
     return table.concat(line)
 end
 
-local function sendBuffer(buffer, conn, writeTimeout, isChunked, flush)
-    local limit = CONN_BUFFER_SIZE
+local function sendBuffer(buffer, conn, writeTimeout, isChunked)
+	local chunk = table.concat(buffer)
+	buffer:reset()
     if (isChunked) then
-        -- account for chunk header and trailer length
-        limit = limit - 8
+        chunk = string.format("%x\r\n", #chunk)..chunk..CRLF
     end
-
-    for str, chunk in buffer:chunk(limit, flush) do
-        if (isChunked) then
-            chunk = string.format("%04x\r\n", #chunk)..chunk..CRLF
-        end
-        conn:write(chunk, writeTimeout)
-    end
+    conn:write(chunk, writeTimeout)
 end
 
 local function bufferHeader(buffer, name, value)
@@ -822,7 +779,7 @@ local function startStreaming(resp)
     bufferHeaders(headers, headersBuffer)
 
     -- flush up to HTTP headers end without chunked encoding before actual body starts
-    sendBuffer(headersBuffer, conn, writeTimeout, false, true)
+    sendBuffer(headersBuffer, conn, writeTimeout, false)
 end
 
 local function appendBody(resp, bodyPart)
@@ -836,7 +793,7 @@ local function appendBody(resp, bodyPart)
     if (resp.luaw_is_chunked and isfull) then
         local conn = resp.luaw_conn
         local writeTimeout = resp.writeTimeout
-        sendBuffer(bodyBuffer, conn, writeTimeout, true, false)
+        sendBuffer(bodyBuffer, conn, writeTimeout, true)
     end
 end
 
@@ -859,10 +816,10 @@ local function writeFullBody(resp)
     local headersBuffer = newBuffer()
     headersBuffer:append(resp:firstLine())
     bufferHeaders(resp.headers, headersBuffer)
-    sendBuffer(headersBuffer, conn, writeTimeout, false, true)
+    sendBuffer(headersBuffer, conn, writeTimeout, false)
 
     -- now write body
-    sendBuffer(bodyBuffer, conn, writeTimeout, false, true)
+    sendBuffer(bodyBuffer, conn, writeTimeout, false)
 end
 
 local function endStreaming(resp)
@@ -871,7 +828,7 @@ local function endStreaming(resp)
     local bodyBuffer = resp.bodyParts
 
     -- flush whatever is remaining in write buffer
-    sendBuffer(bodyBuffer, conn, writeTimeout, true, true)
+    sendBuffer(bodyBuffer, conn, writeTimeout, true)
 
     -- add last chunk encoding trailer
     conn:write("0\r\n\r\n", writeTimeout)
