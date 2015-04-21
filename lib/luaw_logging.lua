@@ -82,7 +82,7 @@ local logFileNameTimeFormat = luaw_log_config.log_filename_timestamp_format or '
 local syslogTag = luaw_log_config.syslog_tag or 'luaw'
 local syslogPresent = luaw_logging_lib.syslogConnect(luaw_log_config.syslog_server, luaw_log_config.syslog_port)
 logRoot.facility = luaw_log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
-local hostname = luaw_tcp_lib.hostname()
+local hostname = luaw_logging_lib.hostname()
 
 
 local logSequenceNum = 0

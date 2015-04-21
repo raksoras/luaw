@@ -33,11 +33,27 @@
 #include "luaw_common.h"
 #include "luaw_logging.h"
 
+static char hostname[512] = {'\0'};
 static logfile_sate log_state = LOG_NOT_OPEN;
 static uv_file logfile;
 static struct addrinfo *log_server_addr = NULL;
 static int log_sock_fd = -1;
 
+
+static const char* get_hostname() {
+    if (hostname[0] == '\0') {
+        int rc = gethostname(hostname, 511);
+        if (rc < 0) {
+            strcpy(hostname, "localhost");
+        }
+    }
+    return hostname;
+}
+
+LUA_LIB_METHOD static int get_hostname_lua(lua_State *L) {
+    lua_pushstring(L, get_hostname());
+    return 1;
+}
 
 LUA_LIB_METHOD static int get_logging_state(lua_State* l_thread) {
     lua_pushinteger(l_thread, log_state);
@@ -191,6 +207,7 @@ static const struct luaL_Reg luaw_logging_lib[] = {
 	{"writeLog", write_log},
     {"syslogConnect", connect_to_syslog},
 	{"syslogSend", send_to_syslog},
+    {"hostname", get_hostname_lua},
     {NULL, NULL}  /* sentinel */
 };
 

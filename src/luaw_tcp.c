@@ -41,7 +41,6 @@
 #include "luaw_tcp.h"
 #include "lfs.h"
 
-static char hostname[512] = {'\0'};
 
 
 connection_t* new_connection(lua_State* L) {
@@ -492,21 +491,6 @@ LUA_LIB_METHOD static int dns_resolve(lua_State* l_thread) {
     return 1;
 }
 
-static const char* get_hostname() {
-    if (hostname[0] == '\0') {
-        int rc = gethostname(hostname, 511);
-        if (rc < 0) {
-            strcpy(hostname, "localhost");
-        }
-    }
-    return hostname;
-}
-
-LUA_LIB_METHOD static int get_hostname_lua(lua_State *L) {
-    lua_pushstring(L, get_hostname());
-    return 1;
-}
-
 
 static const struct luaL_Reg luaw_connection_methods[] = {
 	{"startReading", start_reading},
@@ -521,7 +505,6 @@ static const struct luaL_Reg luaw_tcp_lib[] = {
 	{"newConnection", new_connection_lua},
 	{"connect", client_connect},
 	{"resolveDNS", dns_resolve},
-	{"hostname", get_hostname_lua},
     {NULL, NULL}  /* sentinel */
 };
 
