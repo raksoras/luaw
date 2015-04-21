@@ -15,7 +15,7 @@ registerHandler {
             local token, fieldName, fileName, contentType
             local buffer = {}
             for token, fieldName, fileName, contentType in req:multiPartIterator() do
-                append(buffer, token)
+                append(buffer, tostring(token))
                 append(buffer, fieldName)
                 append(buffer, fileName)
                 append(buffer, contentType)

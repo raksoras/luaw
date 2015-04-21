@@ -20,13 +20,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
-luaw_utils = require("luaw_utils")
-luaw_logging = require("luaw_logging")
-luaw_lpack = require("luapack")
-luaw_scheduler = require("luaw_scheduler")
-luaw_tcp = require("luaw_tcp")
-luaw_timer = require("luaw_timer")
-luaw_http = require("luaw_http")
-luaw_webapp = require("luaw_webapp")
+local constants = require('luaw_constants')
+local TS_BLOCKED_EVENT = constants.TS_BLOCKED_EVENT
 
-luaw_webapp.init()
+
+local timerMT = getmetatable(luaw_timer_lib.newTimer())
+local waitInternal = timerMT.wait
+
+timerMT.wait = function(timer)
+    local status, elapsed = waitInternal(timer, scheduler.tid())
+    if ((status) and (not elapsed)) then
+        -- timer not yet elapsed, wait for libuv on_timeout callback
+        status, elapsed = coroutine.yield(TS_BLOCKED_EVENT)
+    end
+    return status, elapsed
+end
+
+timerMT.sleep = function(timer, timeout)
+    assert(timer:start(timeout))
+    timer:wait()
+end
+
+return luaw_timer_lib

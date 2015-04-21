@@ -76,16 +76,8 @@ struct connection_s {
 
 
 /* TCP lib methods to be exported */
-extern int new_connection_lua(lua_State* L);
 extern connection_t* new_connection(lua_State* L);
 extern void close_connection(connection_t* conn, const int status);
 extern void luaw_init_tcp_lib (lua_State *L);
-extern int client_connect(lua_State* l_thread);
-extern int dns_resolve(lua_State* l_thread);
-extern int new_user_timer(lua_State* l_thread);
-extern int connect_to_syslog(lua_State *L);
-extern int send_to_syslog(lua_State *L);
-extern int get_hostname_lua(lua_State *L);
-extern void clear_read_buffer(connection_t* conn);
 
 #endif

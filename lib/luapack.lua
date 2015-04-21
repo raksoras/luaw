@@ -20,7 +20,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
-local lpackMT = getmetatable(Luaw.newLPackParser())
+local luaw_constants = require("luaw_constants")
+
+local lpackMT = getmetatable(luaw_lpack_lib.newLPackParser())
 
 lpackMT.INT_RANGES = {
     lpackMT.UINT_8,
@@ -157,10 +159,10 @@ local function deserialize(lpack, container, isMap)
             val = readString(lpack, len)
 
         elseif t == lpack.MAP_START[2] then
-            val = deserialize(lpack, Luaw.createDict(0, 16), true)
+            val = deserialize(lpack, luaw_lpack_lib.createDict(0, 16), true)
 
         elseif t == lpack.ARRAY_START[2] then
-            val = deserialize(lpack, Luaw.createDict(16, 0), false)
+            val = deserialize(lpack, luaw_lpack_lib.createDict(16, 0), false)
 
         elseif t == lpack.RECORD_END[2] then
             if ((isMap)and(not isKey)) then
@@ -179,7 +181,7 @@ local function deserialize(lpack, container, isMap)
             val = assert(dictionary[dw], "Entry missing in dictionary")
 
         elseif t == lpack.DICT_START[2] then
-            dictionary = deserialize(lpack, Luaw.createDict(64, 0), false)
+            dictionary = deserialize(lpack, luaw_lpack_lib.createDict(64, 0), false)
             lpack.dictionary = dictionary
             debugDump(dictionary)
 
@@ -219,7 +221,7 @@ local function read(lpack)
 end
 
 local function newLPackReader()
-    local lpackReader = Luaw.newLPackParser();
+    local lpackReader = luaw_lpack_lib.newLPackParser();
     lpackReader.EOF = false
     lpackReader.buffer = ''
     lpackReader.offset = 0
@@ -290,12 +292,10 @@ local function qstore(lpack, val, size)
 
     local writeQ = lpack.writeQ
     table.insert(writeQ, val);
-    local accSize = lpack.writeQsize + size;
+    lpack.writeQsize = lpack.writeQsize + size;
 
-    if (accSize >= lpack.flushLimit) then
+    if (lpack.writeQsize >= lpack.flushLimit) then
         flush(lpack)
-    else
-        lpack.writeQsize = accSize
     end
 end
 
@@ -416,7 +416,7 @@ end
 
 local function setDictionaryForWrite(lpack, dict)
     assert((type(dict) == 'table'), "Please provide valid dictionary table")
-    local dictionary = Luaw.createDict(#dict, 0)
+    local dictionary = luaw_lpack_lib.createDict(#dict, 0)
     writeMarker(lpack, lpack.DICT_START)
     for i, dw in ipairs(dict) do
         writeString(lpack, dw)
@@ -426,37 +426,37 @@ local function setDictionaryForWrite(lpack, dict)
     lpack.dictionary = dictionary
 end
 
-local function newLPackWriter()
-    local lpackWriter = Luaw.newLPackParser()
+local function newLPackWriter(limit)
+    local lpackWriter = luaw_lpack_lib.newLPackParser()
     lpackWriter.writeQ = {}
     lpackWriter.writeQsize = 0
-    lpackWriter.flushLimit = 2048
+    lpackWriter.flushLimit = limit or luaw_constants.CONN_BUFFER_SIZE
     lpackWriter.useDictionary = setDictionaryForWrite
     lpackWriter.write = write
     return lpackWriter
 end
 
-local function newLPackFileWriter(file)
+local function newLPackFileWriter(file, limit)
     assert(file, "File can not be nil")
-    local lpackWriter = newLPackWriter()
+    local lpackWriter = newLPackWriter(limit)
     lpackWriter.writeFn = function(lpack, str)
         file:write(str)
     end
     return lpackWriter
 end
 
-local function newLPackBufferWriter(buff)
+local function newLPackBufferWriter(buff, limit)
     assert(buff, "buffer can not be nil")
-    local lpackWriter = newLPackWriter()
+    local lpackWriter = newLPackWriter(limit)
     lpackWriter.writeFn = function(lpack, str)
         table.insert(buff, str)
     end
     return lpackWriter
 end
 
-local function newLPackRespWriter(resp)
+local function newLPackRespWriter(resp, limit)
     assert(resp, "response can not be nil")
-    local lpackWriter = newLPackWriter()
+    local lpackWriter = newLPackWriter(limit)
     resp.headers['Content-Type'] = 'application/luapack'
     resp:startStreaming()
     lpackWriter.writeFn = function(lpack, str)
@@ -465,13 +465,13 @@ local function newLPackRespWriter(resp)
     return lpackWriter
 end
 
-return {
-    newLPackFileReader = newLPackFileReader,
-    newLPackStringReader = newLPackStringReader,
-    newLPackReqReader = newLPackReqReader,
-    newLPackFileWriter = newLPackFileWriter,
-    newLPackBufferWriter = newLPackBufferWriter,
-    newLPackRespWriter = newLPackRespWriter
-}
+luaw_lpack_lib.newLPackFileReader = newLPackFileReader
+luaw_lpack_lib.newLPackStringReader = newLPackStringReader
+luaw_lpack_lib.newLPackReqReader = newLPackReqReader
+luaw_lpack_lib.newLPackFileWriter = newLPackFileWriter
+luaw_lpack_lib.newLPackBufferWriter = newLPackBufferWriter
+luaw_lpack_lib.newLPackRespWriter = newLPackRespWriter
+
+return luaw_lpack_lib
 
 

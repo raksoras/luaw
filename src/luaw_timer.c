@@ -49,7 +49,7 @@ static void free_user_timer(uv_handle_t* handle) {
     GC_REF(timer)
 }
 
-void close_timer(luaw_timer_t* timer) {
+LUA_OBJ_METHOD static void close_timer(luaw_timer_t* timer) {
     /* timer->lua_ref == NULL also acts as a flag to mark that this timer has been closed */
     if ((timer == NULL)||(timer->lua_ref == NULL)) return;
 
@@ -82,7 +82,7 @@ LUA_OBJ_METHOD static int timer_gc(lua_State *L) {
     return 0;
 }
 
-int new_user_timer(lua_State* l_thread) {
+LUA_LIB_METHOD static int new_user_timer(lua_State* l_thread) {
     luaw_timer_t* timer = (luaw_timer_t*)calloc(1, sizeof(luaw_timer_t));
     if (timer == NULL) {
         return raise_lua_error(l_thread, "Could not allocate memory for user timer");
@@ -162,7 +162,7 @@ Success, timer elapsed:  status = true, timer_elapsed = true
 Success, timer not elapsed:  status = true, timer_elapsed = false
 Failure:  status = false, error message
 */
-int wait_user_timer(lua_State* l_thread) {
+LUA_OBJ_METHOD static int wait_user_timer(lua_State* l_thread) {
     LUA_GET_TIMER_OR_ERROR(l_thread, 1, timer);
 
     if (timer->state == ELAPSED) {
@@ -188,7 +188,7 @@ int wait_user_timer(lua_State* l_thread) {
 }
 
 /* lua call spec: timer:stop() */
-static int stop_user_timer(lua_State* l_thread) {
+LUA_OBJ_METHOD static int stop_user_timer(lua_State* l_thread) {
     LUA_GET_TIMER_OR_ERROR(l_thread, 1, timer);
     if (timer->state == TICKING) {
         if (timer->lua_tid) {
@@ -214,6 +214,14 @@ static const struct luaL_Reg luaw_user_timer_methods[] = {
 	{NULL, NULL}  /* sentinel */
 };
 
+static const struct luaL_Reg luaw_timer_lib[] = {
+	{"newTimer", new_user_timer},
+    {NULL, NULL}  /* sentinel */
+};
+
+
 void luaw_init_timer_lib (lua_State *L) {
 	make_metatable(L, LUA_USER_TIMER_META_TABLE, luaw_user_timer_methods);
+    luaL_newlib(L, luaw_timer_lib);
+    lua_setglobal(L, "luaw_timer_lib");
 }

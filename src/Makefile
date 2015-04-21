@@ -1,12 +1,12 @@
-# Makefile for building Luaw 
+# Makefile for building Luaw
 # == CHANGE THE SETTINGS BELOW TO SUIT YOUR ENVIRONMENT =======================
 
 # Your platform. See PLATS for possible values.
 PLAT= none
 CC= gcc
-CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS) 
+CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS)
 LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
-LIBS= -luv -lpthread -llua -lm $(SYSLIBS) $(MYLIBS)
+LIBS= -luv -lpthread -lluajit-5.1 -lm $(SYSLIBS) $(MYLIBS)
 
 SYSCFLAGS=
 SYSLDFLAGS=
@@ -41,7 +41,7 @@ PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
 #What to install
 LUAW_BIN=luaw_server
 
-LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_lib.lua luaw_scheduler.lua luaw_webapp.lua
+LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua luaw_scheduler.lua luaw_webapp.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
 
 LUAW_CONF=server.cfg
 
@@ -52,7 +52,7 @@ INSTALL_CONF=$(INSTALL_ROOT)/conf
 INSTALL_LOGS=$(INSTALL_ROOT)/logs
 INSTALL_WEBAPP=$(INSTALL_ROOT)/webapps
 
-CORE_O=	http_parser.o lua_lpack.o luaw_common.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
+CORE_O=	http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
 
 LUAW_O= $(CORE_O) $(MYOBJS)
 
@@ -145,9 +145,11 @@ solaris:
 
 http_parser.o: http_parser.c http_parser.h
 lua_lpack.o: lua_lpack.c lua_lpack.h luaw_common.h
+luaw_logging.o: luaw_logging.c luaw_logging.h luaw_common.h
 luaw_common.o: luaw_common.c luaw_common.h luaw_tcp.h luaw_http_parser.h luaw_timer.h lua_lpack.h
 luaw_http_parser.o: luaw_http_parser.c luaw_http_parser.h luaw_common.h luaw_tcp.h lfs.h
-luaw_server.o: luaw_server.c luaw_common.h luaw_tcp.h
+luaw_server.o: luaw_server.c luaw_common.h luaw_tcp.h luaw_logging.h
 luaw_tcp.o: luaw_tcp.c luaw_tcp.h luaw_common.h http_parser.h luaw_http_parser.h luaw_tcp.h
 luaw_timer.o: luaw_timer.c luaw_timer.h luaw_common.h
 lfs.o: lfs.c lfs.h
+

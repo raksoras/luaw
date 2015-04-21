@@ -20,109 +20,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
--- Thread states
-Luaw.TS_RUNNABLE = {"RUNNABLE"}
-Luaw.TS_DONE = {"DONE"}
-Luaw.TS_BLOCKED_EVENT = {"BLOCKED_ON_EVENT"}
-Luaw.TS_BLOCKED_THREAD = {"BLOCKED_ON_THREAD"}
+local constants = require('luaw_constants')
+local luaw_tcp_lib = require('luaw_tcp')
 
-local TS_BLOCKED_EVENT = Luaw.TS_BLOCKED_EVENT
-local TS_RUNNABLE = Luaw.TS_RUNNABLE
+local TS_BLOCKED_EVENT = constants.TS_BLOCKED_EVENT
+local TS_RUNNABLE = constants.TS_RUNNABLE
 
-local DEFAULT_CONNECT_TIMEOUT = luaw_server_config.connect_timeout or 8000
-local DEFAULT_READ_TIMEOUT = luaw_server_config.read_timeout or 3000
-local DEFAULT_WRITE_TIMEOUT = luaw_server_config.write_timeout or 3000
-local CONN_BUFFER_SIZE = luaw_server_config.connection_buffer_size or 4096
+local CONN_BUFFER_SIZE = constants.CONN_BUFFER_SIZE
 
-EOF = 0
-CRLF = '\r\n'
+local EOF = constants.EOF
+local CRLF = constants.CRLF
 
-local MULTIPART_BEGIN = "MULTIPART_BEGIN"
-local PART_BEGIN = "PART_BEGIN"
-local PART_DATA = "PART_DATA"
-local PART_END = "PART_END"
-local MULTIPART_END = "MULTIPART_END"
-
-Luaw.MULTIPART_BEGIN = MULTIPART_BEGIN
-Luaw.PART_BEGIN = PART_BEGIN
-Luaw.PART_DATA = PART_DATA
-Luaw.PART_END = PART_END
-Luaw.MULTIPART_END = MULTIPART_END
-
-local function tprint(tbl, indent, tab)
-  for k, v in pairs(tbl) do
-    if type(v) == "table" then
-		print(string.rep(tab, indent) .. tostring(k) .. ": {")
-		tprint(v, indent+1, tab)
-		print(string.rep(tab, indent) .. "}")
-    else
-		print(string.rep(tab, indent) .. tostring(k) .. ": " .. tostring(v))
-    end
-  end
-end
-
--- Print contents of `tbl`, with indentation.
--- `indent` sets the initial level of indentation.
-function debugDump (tbl, indent, tab)
-    indent = indent or 0
-    tab = tab or "  "
-  	print(string.rep(tab, indent) .. "{")
-	tprint(tbl, indent+1, tab)
-	print(string.rep(tab, indent) .. "}")
-end
-
-function steplight(mesg)
-    local tid = tostring(Luaw.scheduler.tid())
-    print("Thread-"..tid.."> "..tostring(mesg))
-end
-
-function step(mesg, level)
-    local tid = tostring(Luaw.scheduler.tid())
-
-    local lvl = level or 2
-    if (lvl < 0) then lvl = lvl * -1 end
-
-    local dc = debug.getinfo(lvl, "nSl")
-
-    local str = ""
-    if type(mesg) == 'table' then
-        for k,v in pairs(mesg) do
-            str = str..", "..tostring(k).."="..tostring(v)
-        end
-    else
-        str = tostring(mesg)
-    end
-
-    print('Thread '..tid..'> line# '..tostring(dc.linedefined)..' in function '..tostring(dc.name)..' in file '..tostring(dc.source)..': '..str)
-
-    if ((level)and(level < 0)) then
-        print(debug.traceback())
-    end
-end
-
-function Luaw.run(codeblock)
-    if (codeblock) then
-        local try = codeblock.try
-        if (try) then
-            local catch = codeblock.catch
-            local finally = codeblock.finally
-
-            local status, err = pcall(try, codeblock)
-            if ((not status)and(catch)) then
-                status, err = pcall(catch, codeblock, err)
-            end
-
-            if (finally) then
-                finally(codeblock)
-            end
-
-            if (not status) then
-                error(err)
-            end
-        end
-    end
-end
-
+local MULTIPART_BEGIN = constants.MULTIPART_BEGIN
+local PART_BEGIN = constants.PART_BEGIN
+local PART_DATA = constants.PART_DATA
+local PART_END = constants.PART_END
+local MULTIPART_END = constants.MULTIPART_END
 
 local http_status_codes = {
     [100] = "Continue",
@@ -209,9 +122,8 @@ local function newBuffer()
     }
 end
 
-Luaw.newBuffer = newBuffer
 
-function Luaw.storeHttpParam(params, name , value)
+function luaw_http_lib.storeHttpParam(params, name , value)
 	oldValue = params[name]
     if (oldValue) then
 		-- handle multi-valued param names
@@ -227,7 +139,7 @@ function Luaw.storeHttpParam(params, name , value)
 	end
 end
 
-local parserMT = getmetatable(Luaw.newHttpRequestParser())
+local parserMT = getmetatable(luaw_http_lib.newHttpRequestParser())
 
 --[[ HTTP parser we use can invoke callback for the same HTTP field (status, URL, header
 name/value etc.) multiple times, each time passing only few characters for the current
@@ -326,7 +238,7 @@ local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, h
     local parsedURL
     if url then
         local method = req.method
-        parsedURL = Luaw.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
+        parsedURL = luaw_http_lib.parseURL(url, ((method) and (string.upper(method) == "CONNECT")))
     else
         parsedURL = {}
     end
@@ -336,7 +248,7 @@ local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, h
     local params = {}
     local queryString = parsedURL.queryString
     if queryString then
-        assert(Luaw:urlDecode(queryString, params))
+        assert(luaw_http_lib:urlDecode(queryString, params))
     end
     req.params = params
 
@@ -366,7 +278,7 @@ local function onMesgComplete(req, cbtype, remaining, keepAlive)
     local params = req.params
     local contentType = req.headers['Content-Type']
     if ((contentType) and (contentType:lower() == 'application/x-www-form-urlencoded')) then
-        assert(Luaw:urlDecode(req.body, params))
+        assert(luaw_http_lib:urlDecode(req.body, params))
     end
 
     req.luaw_mesg_done = true
@@ -850,37 +762,6 @@ local function close(req)
     end
 end
 
-local conn = Luaw.newConnection();
-local connMT = getmetatable(conn)
-conn:close()
-local startReadingInternal = connMT.startReading
-local readInternal = connMT.read
-local writeInternal = connMT.write
-
-connMT.startReading = function(self)
-    local status, mesg = startReadingInternal(self)
-    assert(status, mesg)
-end
-
-connMT.read = function(self, readTimeout)
-    local status, str = readInternal(self, Luaw.scheduler.tid(), readTimeout or DEFAULT_READ_TIMEOUT)
-    if ((status)and(not str)) then
-        -- nothing in buffer, wait for libuv on_read callback
-        status, str = coroutine.yield(TS_BLOCKED_EVENT)
-    end
-    return status, str
-end
-
-connMT.write = function(self, str, writeTimeout)
-    local status, nwritten = writeInternal(self, Luaw.scheduler.tid(), str, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
-    if ((status)and(nwritten > 0)) then
-        -- there is something to write, yield for libuv callback
-        status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
-    end
-    assert(status, nwritten)
-    return nwritten
-end
-
 local function reset(req)
     req.headers = {}
     req["_acc_header_name_"] = nil
@@ -896,13 +777,13 @@ local function reset(req)
     req.statusMesg = nil
 end
 
-Luaw.newServerHttpRequest = function(conn)
+luaw_http_lib.newServerHttpRequest = function(conn)
 	local req = {
 	    luaw_mesg_type = 'sreq',
 	    luaw_conn = conn,
 	    headers = {},
 		bodyParts = newBuffer(),
-	    luaw_parser = Luaw:newHttpRequestParser(),
+	    luaw_parser = luaw_http_lib:newHttpRequestParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    isComplete = isComplete,
@@ -918,7 +799,7 @@ Luaw.newServerHttpRequest = function(conn)
     return req;
 end
 
-Luaw.newServerHttpResponse = function(conn)
+luaw_http_lib.newServerHttpResponse = function(conn)
     local resp = {
         luaw_mesg_type = 'sresp',
         luaw_conn = conn,
@@ -946,7 +827,7 @@ local function newClientHttpResponse(conn)
 	    luaw_conn = conn,
 	    headers = {},
 		bodyParts = newBuffer(),
-	    luaw_parser = Luaw:newHttpResponseParser(),
+	    luaw_parser = luaw_http_lib:newHttpResponseParser(),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    readAndParse = readAndParse,
@@ -960,25 +841,8 @@ local function newClientHttpResponse(conn)
 	return resp;
 end
 
-local connectInternal = Luaw.connect
-
 local function connect(req)
-    local hostName, hostIP = req.hostName, req.hostIP
-    assert((hostName or hostIP), "Either hostName or hostIP must be specified in request")
-    local threadId = Luaw.scheduler.tid()
-    if not hostIP then
-        local status, mesg = Luaw.resolveDNS(hostName, threadId)
-        assert(status, mesg)
-        status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
-        assert(status, mesg)
-        hostIP = mesg
-    end
-
-    local connectTimeout = req.connectTimeout or DEFAULT_CONNECT_TIMEOUT
-    local conn = assert(connectInternal(hostIP, req.port, threadId, connectTimeout))
-
-    -- initial connect_req succeeded, block for libuv callback
-    assert(coroutine.yield(TS_BLOCKED_EVENT))
+    local conn = assert(luaw_tcp_lib.connect(req.hostIP, req.hostName, req.port, req.connectTimeout))
     return conn
 end
 
@@ -1003,7 +867,7 @@ local function execute(req)
 end
 
 
-Luaw.newClientHttpRequest = function()
+luaw_http_lib.newClientHttpRequest = function()
     local req = {
         luaw_mesg_type = 'creq',
         port = 80,
@@ -1029,61 +893,4 @@ Luaw.newClientHttpRequest = function()
 end
 
 
--- Timer functions
-local timerMT = getmetatable(Luaw.newTimer())
-local waitInternal = timerMT.wait
-
-timerMT.wait = function(timer)
-    local status, elapsed = waitInternal(timer, Luaw.scheduler.tid())
-    if ((status) and (not elapsed)) then
-        -- timer not yet elapsed, wait for libuv on_timeout callback
-        status, elapsed = coroutine.yield(TS_BLOCKED_EVENT)
-    end
-    return status, elapsed
-end
-
-timerMT.sleep = function(timer, timeout)
-    assert(timer:start(timeout))
-    timer:wait()
-end
-
-Luaw.splitter = function(splitCh)
-    local separator = string.byte(splitCh, 1, 1)
-    local byte = string.byte
-
-    return function (str, pos)
-        pos = pos + 1
-        local start = pos
-        local len = #str
-        while pos <= len do
-            local ch = byte(str, pos, pos)
-            if (ch == separator) then
-                if (pos > start) then
-                    return pos, string.sub(str, start, pos-1)
-                end
-                start = pos + 1
-            end
-            pos = pos + 1
-        end
-        if (pos > start) then return pos, string.sub(str, start, pos) end
-    end
-end
-
-Luaw.nilFn = function()
-    return nil
-end
-
-Luaw.formattedLine = function(str, lineSize, paddingCh, beginCh, endCh)
-    lineSize = lineSize or 0
-    paddingCh = paddingCh or ''
-    beginCh = beginCh or ''
-    endCh = endCh or ''
-    paddingWidth = (lineSize - #str -2)/2
-    local padding = ''
-    if paddingWidth > 0 then
-        padding = string.rep(paddingCh, paddingWidth)
-    end
-    print(string.format("%s %s %s %s %s", beginCh, padding, str, padding, endCh))
-end
-
-return Luaw
+return luaw_http_lib

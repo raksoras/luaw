@@ -1,3 +1,4 @@
+local http_lib = require('luaw_http')
 --[[
     Luaw allows you to replace it's default MVC/REST request handler with your own custom HTTP
 request handler implementation. To override the default HTTP request handler just set Luaw object's
@@ -7,13 +8,13 @@ The function is called on its own separate Luaw coroutine for each HTTP request 
 about multithreaded access to shared state inside the function.
 ]]
 
-Luaw.request_handler =  function(conn)
+http_lib.request_handler =  function(conn)
     conn:startReading()
 
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do
-        local req = Luaw.newServerHttpRequest(conn)
-        local resp = Luaw.newServerHttpResponse(conn)
+        local req = http_lib.newServerHttpRequest(conn)
+        local resp = http_lib.newServerHttpResponse(conn)
 
         -- read and parse full request
         req:readFull()
@@ -27,7 +28,7 @@ Luaw.request_handler =  function(conn)
         local beURL = reqHeaders['backend-url']
 
         if (beHost and beURL) then
-           local backendReq = Luaw.newClientHttpRequest()
+           local backendReq = http_lib.newClientHttpRequest()
            backendReq.hostName = beHost
            backendReq.url = beURL
            backendReq.method = 'GET'

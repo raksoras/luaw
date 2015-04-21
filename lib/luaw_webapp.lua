@@ -20,7 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
-local Luaw = require("luaw_lib")
+local luaw_utils_lib = require("luaw_utils")
+local luaw_http_lib = require("luaw_http")
 
 local HTTP_METHODS = {
     GET = "GET",
@@ -64,9 +65,9 @@ local function findFiles(path, pattern, matches)
     return matches
 end
 
-local pathIterator = Luaw.splitter('/')
+local pathIterator = luaw_utils_lib.splitter('/')
 local function splitPath(path)
-    if not path then return Luaw.nilFn end
+    if not path then return luaw_util_lib.nilFn end
     return pathIterator, path, 0
 end
 
@@ -284,20 +285,20 @@ local function serviceHTTP(conn)
 
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do
-        local req = Luaw.newServerHttpRequest(conn)
+        local req = luaw_http_lib.newServerHttpRequest(conn)
 
         -- read and parse full request
-        local status = pcall(req.readFull, req)
+        local status, errmesg = pcall(req.readFull, req)
         if ((not status)or(req.EOF == true)) then
             conn:close()
             if (status) then
                 return "read time out"
             end
-            print("Error: ", eof)
+            print("Error: ", errmesg, debug.traceback())
             return "connection reset by peer"
         end
 
-        local resp = Luaw.newServerHttpResponse(conn)
+        local resp = luaw_http_lib.newServerHttpResponse(conn)
         local status, errMesg = pcall(dispatchAction, req, resp)
 
         if (not status) then
@@ -391,14 +392,14 @@ local function startWebApp(app)
     -- register resources
     local resources = app.resources
     for i,resource in ipairs(resources) do
-        Luaw.formattedLine(".Loading resource "..resource)
+        luaw_utils_lib.formattedLine(".Loading resource "..resource)
         -- declare globals (registerHandler and webapp) for the duration of the loadfile(resource)
         registerHandler = registerResource
         webapp = app
         local routeDefn = assert(loadfile(resource), string.format("Could not load resource %s", resource))
         routeDefn()
     end
-    Luaw.formattedLine("#Loaded total "..#resources.." resources\n")
+    luaw_utils_lib.formattedLine("#Loaded total "..#resources.." resources\n")
 
     -- compile views
     local views = app.views
@@ -406,24 +407,24 @@ local function startWebApp(app)
     local appRootLen = string.len(app.appRoot) + 1
     for i,view in ipairs(views) do
         local relativeViewPath = string.sub(view, appRootLen)
-        Luaw.formattedLine(".Loading view "..relativeViewPath)
+        luaw_utils_lib.formattedLine(".Loading view "..relativeViewPath)
         local viewBuff = {}
         local viewDefn = loadView(view, viewBuff)
         local compiledView, errMesg = load(viewDefn, relativeViewPath)
         if (not compiledView) then
-            Luaw.formattedLine("\nError while compiling view: "..view)
-            Luaw.formattedLine("<SOURCE>")
+            luaw_utils_lib.formattedLine("\nError while compiling view: "..view)
+            luaw_utils_lib.formattedLine("<SOURCE>")
             for i, line in ipairs(viewBuff) do
                 print(tostring(i)..":\t"..tostring(line))
             end
-            Luaw.formattedLine("<SOURCE>")
+            luaw_utils_lib.formattedLine("<SOURCE>")
             error(errMesg)
         end
         compiledViews[relativeViewPath] = compiledView()
     end
     app.views = nil
     app.compiledViews = compiledViews
-    Luaw.formattedLine("#Compiled total "..#views.." views")
+    luaw_utils_lib.formattedLine("#Compiled total "..#views.." views")
 end
 
 local function init()
@@ -436,11 +437,11 @@ local function init()
                 if ((attrs)and(attrs.mode == 'directory')) then
                     local webappCfgFile = webappDir..DIR_SEPARATOR..'web.lua'
                     if (lfs.attributes(webappCfgFile, 'mode') == 'file') then
-                        Luaw.formattedLine('Starting webapp '..webappName, 120, '*', '\n')
+                        luaw_utils_lib.formattedLine('Starting webapp '..webappName, 120, '*', '\n')
                         dofile(webappCfgFile) -- defines global variable luaw_webapp
                         local app = loadWebApp(webappName, webappDir)
                         startWebApp(app)
-                        Luaw.formattedLine('Webapp '..webappName..' started', 120, '*')
+                        luaw_utils_lib.formattedLine('Webapp '..webappName..' started', 120, '*')
                         webapp = nil  -- reset global variable
                     end
                 end
@@ -450,7 +451,7 @@ local function init()
 end
 
 -- install REST HTTP app handler as a default request handler
-Luaw.request_handler = serviceHTTP
+luaw_http_lib.request_handler = serviceHTTP
 
 return {
     init = init,

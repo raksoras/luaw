@@ -1,4 +1,8 @@
-big_str = "abcdefghijklmnopqrstuvwxyz0123456789"
+local utils_lib = require('luaw_utils')
+local http_lib = require('luaw_http')
+local lpack = require('luapack')
+
+local big_str = "abcdefghijklmnopqrstuvwxyz0123456789"
 while (#big_str < 4096) do
     big_str = big_str ..'-'..big_str
 end
@@ -106,7 +110,7 @@ registerHandler {
 
 	handler = function(req, resp, pathParams)
 	    resp:setStatus(200)
-        local lpackWriter = Luaw.lpack.newLPackRespWriter(resp)
+        local lpackWriter = lpack.newLPackRespWriter(resp)
         if (req.params['dict'] == 'true') then
             lpackWriter:useDictionary(dict)
         end

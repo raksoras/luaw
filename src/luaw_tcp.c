@@ -41,6 +41,8 @@
 #include "luaw_tcp.h"
 #include "lfs.h"
 
+static char hostname[512] = {'\0'};
+
 
 connection_t* new_connection(lua_State* L) {
     connection_t* conn = (connection_t*)calloc(1, sizeof(connection_t));
@@ -81,7 +83,7 @@ connection_t* new_connection(lua_State* L) {
     return conn;
 }
 
-LUA_LIB_METHOD int new_connection_lua(lua_State* L) {
+LUA_LIB_METHOD static int new_connection_lua(lua_State* L) {
     new_connection(L);
     return 1;
 }
@@ -385,7 +387,7 @@ LIBUV_CALLBACK static void on_client_connect(uv_connect_t* connect_req, int stat
 Success: conn
 Failure: false, error message
 */
-LUA_LIB_METHOD int client_connect(lua_State* l_thread) {
+LUA_LIB_METHOD static int client_connect(lua_State* l_thread) {
     const char* ip4 = luaL_checkstring(l_thread, 1);
 
     int port = lua_tointeger(l_thread, 2);
@@ -451,7 +453,7 @@ LIBUV_CALLBACK static void on_resolved(uv_getaddrinfo_t *resolver, int status, s
     resume_lua_thread(l_global, 3, 2, 0);
 }
 
-LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {
+LUA_LIB_METHOD static int dns_resolve(lua_State* l_thread) {
     const char* hostname = luaL_checkstring(l_thread, 1);
 
     int lua_tid = lua_tointeger(l_thread, 2);
@@ -490,6 +492,22 @@ LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {
     return 1;
 }
 
+static const char* get_hostname() {
+    if (hostname[0] == '\0') {
+        int rc = gethostname(hostname, 511);
+        if (rc < 0) {
+            strcpy(hostname, "localhost");
+        }
+    }
+    return hostname;
+}
+
+LUA_LIB_METHOD static int get_hostname_lua(lua_State *L) {
+    lua_pushstring(L, get_hostname());
+    return 1;
+}
+
+
 static const struct luaL_Reg luaw_connection_methods[] = {
 	{"startReading", start_reading},
 	{"read", read_check},
@@ -499,7 +517,18 @@ static const struct luaL_Reg luaw_connection_methods[] = {
 	{NULL, NULL}  /* sentinel */
 };
 
+static const struct luaL_Reg luaw_tcp_lib[] = {
+	{"newConnection", new_connection_lua},
+	{"connect", client_connect},
+	{"resolveDNS", dns_resolve},
+	{"hostname", get_hostname_lua},
+    {NULL, NULL}  /* sentinel */
+};
+
+
 void luaw_init_tcp_lib (lua_State *L) {
 	make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
+    luaL_newlib(L, luaw_tcp_lib);
+    lua_setglobal(L, "luaw_tcp_lib");
 }
 

@@ -93,9 +93,9 @@ static int handle_name_value_pair(lua_State* L, const char* name, int name_len, 
  success: params table, nil = http_lib:url_decode(url encoded string, params)
  success: status(false), error message = http_lib:url_decode(url encoded string, params)
 */
-LUA_LIB_METHOD int luaw_url_decode(lua_State *L) {
+LUA_LIB_METHOD static int luaw_url_decode(lua_State *L) {
 	if (!lua_istable(L, 1)) {
-		return raise_lua_error(L, "Lua HTTP lib table is missing");
+		return raise_lua_error(L, "Luaw HTTP lib table is missing");
 	}
 	size_t length = 0;
 	const char* data = lua_tolstring(L, 2, &length);
@@ -188,15 +188,15 @@ static int new_lhttp_parser(lua_State *L, enum http_parser_type parser_type) {
 	return 1;
 }
 
-LUA_LIB_METHOD int luaw_new_http_request_parser(lua_State* L) {
+LUA_LIB_METHOD static int luaw_new_http_request_parser(lua_State* L) {
     return new_lhttp_parser(L, HTTP_REQUEST);
 }
 
-LUA_LIB_METHOD int luaw_new_http_response_parser(lua_State* L) {
+LUA_LIB_METHOD static int luaw_new_http_response_parser(lua_State* L) {
     return new_lhttp_parser(L, HTTP_RESPONSE);
 }
 
-LUA_LIB_METHOD int luaw_init_http_parser(lua_State* L) {
+LUA_LIB_METHOD static int luaw_init_http_parser(lua_State* L) {
 	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
 	http_parser* parser = &lhttp_parser->parser;
 	http_parser_init(parser, parser->type);
@@ -350,7 +350,7 @@ static void push_url_part(lua_State *L, const char* buff, struct http_parser_url
 * Success: url parts table = http_lib.parseURL(url_string, is_connect)
 * Failure: nil = http_lib.parseURL(url_string, is_connect)
 */
-LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
+LUA_LIB_METHOD static int luaw_parse_url(lua_State *L) {
 	size_t len = 0;
 	const char* buff = luaL_checklstring(L, 1, &len);
 	int is_connect = lua_toboolean(L, 2);
@@ -379,6 +379,14 @@ LUA_LIB_METHOD int luaw_parse_url(lua_State *L) {
 	return 1;
 }
 
+static const struct luaL_Reg luaw_http_lib[] = {
+	{"urlDecode", luaw_url_decode},
+	{"newHttpRequestParser", luaw_new_http_request_parser},
+	{"newHttpResponseParser", luaw_new_http_response_parser},
+	{"parseURL", luaw_parse_url},
+    {NULL, NULL}  /* sentinel */
+};
+
 static const struct luaL_Reg http_parser_methods[] = {
 	{"parseHttp", parse_http},
 	{"initHttpParser", luaw_init_http_parser},
@@ -387,4 +395,6 @@ static const struct luaL_Reg http_parser_methods[] = {
 
 void luaw_init_http_lib (lua_State *L) {
     make_metatable(L, LUA_HTTP_PARSER_META_TABLE, http_parser_methods);
+    luaL_newlib(L, luaw_http_lib);
+    lua_setglobal(L, "luaw_http_lib");
 }
