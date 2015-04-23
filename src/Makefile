@@ -1,26 +1,27 @@
 # Makefile for building Luaw
 # == CHANGE THE SETTINGS BELOW TO SUIT YOUR ENVIRONMENT =======================
 
-# Your platform. See PLATS for possible values.
-PLAT?= none
-CC= gcc
-CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS) -I../$(UVDIR)/include -I../$(LUADIR)/src
-LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS) $(OSXLDFLAGS)
+CC?= gcc
+CFLAGS?= -O2 -g -Wall
+CFLAGS+= $(SYSCFLAGS) $(MYCFLAGS) -I../$(UVDIR)/include -I../$(LUADIR)/src
+LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
 LIBS= ../$(UVLIB) -lpthread ../$(LUALIB) -lm $(SYSLIBS) $(MYLIBS)
 
-SYSCFLAGS=
-SYSLDFLAGS=
-SYSLIBS=
+# == END OF USER SETTINGS -- NO NEED TO CHANGE ANYTHING BELOW THIS LINE =======
 
-MYCFLAGS=
-MYLDFLAGS=
-MYLIBS=
+# Build artifacts
+LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
+LUAW_BIN= luaw_server
+LUAW_CONF= server.cfg
+LUAW_SCRIPTS= luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua \
+luaw_scheduler.lua luaw_webapp.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
 
 # How to install. If your install program does not support "-p", then
 # you may have to run ranlib on the installed liblua.a.
-INSTALL= install -p
-INSTALL_EXEC= $(INSTALL) -m 0755
-INSTALL_DATA= $(INSTALL) -m 0644
+INSTALL= install
+INSTALL_EXEC= $(INSTALL) -p -m 0755
+INSTALL_DATA= $(INSTALL) -p -m 0644
+
 #
 # If you don't have "install" you can use "cp" instead.
 # INSTALL= cp -p
@@ -29,18 +30,8 @@ INSTALL_DATA= $(INSTALL) -m 0644
 
 # Other utilities.
 MKDIR= mkdir -p
-RM= rm -rf
-
-# == END OF USER SETTINGS -- NO NEED TO CHANGE ANYTHING BELOW THIS LINE =======
-
-PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
-ALL= all
-
-#What to install
-LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
-LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua luaw_scheduler.lua luaw_webapp.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
-LUAW_BIN=luaw_server
-LUAW_CONF=server.cfg
+RM= rm -f
+RMDIR= rm -rf
 
 #where to install
 INSTALL_BIN=$(INSTALL_ROOT)/bin
@@ -50,26 +41,11 @@ INSTALL_LOGS=$(INSTALL_ROOT)/logs
 INSTALL_WEBAPP=$(INSTALL_ROOT)/webapps
 
 # Targets start here.
-default: $(PLAT)
-
-none:
-	@echo "Please do 'make PLATFORM' where PLATFORM is one of these:"
-	@echo "   $(PLATS)"
 
 all: $(LUAW_BIN)
 
 $(LUAW_BIN): $(LUAW_OBJS)
 	$(CC) -o $@ $(LDFLAGS) $(LUAW_OBJS) $(LIBS)
-
-clean: 
-	$(RM) $(LUAW_BIN) $(LUAW_OBJS)
-
-echo:
-	@echo "CC= $(CC)"
-	@echo "CFLAGS= $(CFLAGS)"
-	@echo "LDFLAGS= $(SYSLDFLAGS)"
-	@echo "LIBS= $(LIBS)"
-	@echo "RM= $(RM)"
 
 install: check_install_root
 	$(MKDIR) $(INSTALL_BIN)
@@ -81,51 +57,31 @@ install: check_install_root
 	cd ../lib && $(INSTALL_DATA) $(LUAW_SCRIPTS) $(INSTALL_BIN)
 	cd ../conf && $(INSTALL_DATA) $(LUAW_CONF) $(INSTALL_CONF)
 
+install-sample: install
+	cd ../sample && cp -r * $(INSTALL_ROOT)
+
 uninstall: check_install_root
-	$(RM) $(INSTALL_BIN)
-	$(RM) $(INSTALL_LIB)
-	$(RM) $(INSTALL_CONF)
-	$(RM) $(INSTALL_LOGS)
-	$(RM) $(INSTALL_WEBAPP)
+	$(RMDIR) $(INSTALL_ROOT)/*
 
 check_install_root:
 ifndef INSTALL_ROOT
 	$(error INSTALL_ROOT is undefined)
 endif
 
-# Convenience targets for popular platforms
+clean:
+	$(RM) $(LUAW_BIN) $(LUAW_OBJS)
 
-aix:
-	$(MAKE) $(ALL) CC="xlc" CFLAGS="-O2" SYSLIBS="-ldl" SYSLDFLAGS="-brtl -bexpall"
-
-ansi:
-	$(MAKE) $(ALL)
-
-bsd:
-	$(MAKE) $(ALL) SYSLIBS="-Wl,-E"
-
-freebsd:
-	$(MAKE) $(ALL) SYSLIBS="-Wl,-E"
-
-generic: $(ALL)
-
-linux:
-	$(MAKE) $(ALL) SYSLIBS="-Wl,-E -ldl"
-
-macosx:
-	$(MAKE) $(ALL) CC="cc" $(SYSCFLAGS) $(MYCFLAGS) $(MYLDFLAGS) $(OSXLDFLAGS)
-
-posix:
-	$(MAKE) $(ALL)
-
-solaris:
-	$(MAKE) $(ALL) SYSLIBS="-ldl"
+echo:
+	@echo "CC= $(CC)"
+	@echo "CFLAGS= $(CFLAGS)"
+	@echo "LDFLAGS= $(SYSLDFLAGS)"
+	@echo "LIBS= $(LIBS)"
+	@echo "RM= $(RM)"
 
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all $(PLATS) default clean echo none
+.PHONY: default install install-sample uninstall check_install_root clean echo
 
-# DO NOT DELETE
-
+# Luaw object files
 http_parser.o: http_parser.c http_parser.h
 lua_lpack.o: lua_lpack.c lua_lpack.h luaw_common.h
 luaw_logging.o: luaw_logging.c luaw_logging.h luaw_common.h

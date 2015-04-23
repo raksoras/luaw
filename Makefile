@@ -14,17 +14,17 @@ else
     export OSXLDFLAGS=
 endif
 
-
 # == END OF USER SETTINGS -- NO NEED TO CHANGE ANYTHING BELOW THIS LINE =======
+
+# Supported platforms
+PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
+ALL= all
 
 # Targets start here.
 
-all: check_plat $(UVLIB) $(LUALIB) luaw
-
-check_plat:
-ifndef PLAT
-	$(error PLAT is not defined)
-endif
+all:
+	@echo "Please do 'make PLATFORM' where PLATFORM is one of these:"
+	@echo "   $(PLATS)"
 
 $(UVLIB): $(UVDIR)/Makefile
 	$(MAKE) -C $(UVDIR)
@@ -39,16 +39,63 @@ $(LUADIR)/src/libluajit.a:
 	$(MAKE) -C $(LUADIR)
 
 $(LUADIR)/src/liblua.a:
-	$(MAKE) -C $(LUADIR) $(PLAT)
+	$(MAKE) -C $(LUADIR) $(TARGET)
 
 luaw:
-	$(MAKE) -C src $(PLAT)
+	$(MAKE) -C src $(ALL) SYSLDFLAGS=$(SYSLDFLAGS) CC=$(CC)
+
+# Convenience targets for popular platforms
+
+aix: TARGET= aix
+aix: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) CC="xlc" CFLAGS="-O2" SYSLIBS="-ldl" SYSLDFLAGS="-brtl -bexpall"
+
+ansi: TARGET= ansi
+ansi: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL)
+
+bsd: TARGET= bsd
+bsd: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E"
+
+freebsd: TARGET= freebsd
+freebsd: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E"
+
+linux: TARGET= linux
+linux: SYSLIBS= -Wl,-E -ldl
+linux: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E -ldl"
+
+macosx: TARGET= macosx
+macosx: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) CC="cc" SYSLDFLAGS=$(OSXLDFLAGS)
+
+posix: TARGET= posix
+posix: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL)
+
+solaris: TARGET= solaris
+solaris: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-ldl"
+
+#build objects management
+
+install:
+	$(MAKE) -C src install
+
+install-sample:
+	$(MAKE) -C src install-sample
+
+uninstall:
+	$(MAKE) -C src uninstall
 
 clean: $(UVDIR)/Makefile
-	$(MAKE) -C $(LUADIR) clean
+	$(MAKE) -C deps/luajit-2.0 clean
+	$(MAKE) -C deps/lua-PUC-Rio clean
 	$(MAKE) -C $(UVDIR) distclean
 	$(MAKE) -C src clean
 
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all check_plat $(UVLIB) $(LUALIB) luaw clean
+.PHONY: all check_plat $(LUALIB) $(PLATS) luaw install uninstall clean $(LUADIR)/src/libluajit.a $(LUADIR)/src/liblua.a
 
