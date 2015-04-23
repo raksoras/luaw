@@ -2,11 +2,11 @@
 # == CHANGE THE SETTINGS BELOW TO SUIT YOUR ENVIRONMENT =======================
 
 # Your platform. See PLATS for possible values.
-PLAT= none
+PLAT?= none
 CC= gcc
-CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS)
-LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
-LIBS= -luv -lpthread -lluajit-5.1 -lm $(SYSLIBS) $(MYLIBS)
+CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS) -I../$(UVDIR)/include -I../$(LUADIR)/src
+LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS) $(OSXLDFLAGS)
+LIBS= ../$(UVLIB) -lpthread ../$(LUALIB) -lm $(SYSLIBS) $(MYLIBS)
 
 SYSCFLAGS=
 SYSLDFLAGS=
@@ -15,7 +15,6 @@ SYSLIBS=
 MYCFLAGS=
 MYLDFLAGS=
 MYLIBS=
-MYOBJS=
 
 # How to install. If your install program does not support "-p", then
 # you may have to run ranlib on the installed liblua.a.
@@ -34,15 +33,13 @@ RM= rm -rf
 
 # == END OF USER SETTINGS -- NO NEED TO CHANGE ANYTHING BELOW THIS LINE =======
 
-
-
 PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
+ALL= all
 
 #What to install
-LUAW_BIN=luaw_server
-
+LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
 LUAW_SCRIPTS=luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua luaw_scheduler.lua luaw_webapp.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
-
+LUAW_BIN=luaw_server
 LUAW_CONF=server.cfg
 
 #where to install
@@ -52,31 +49,22 @@ INSTALL_CONF=$(INSTALL_ROOT)/conf
 INSTALL_LOGS=$(INSTALL_ROOT)/logs
 INSTALL_WEBAPP=$(INSTALL_ROOT)/webapps
 
-CORE_O=	http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
-
-LUAW_O= $(CORE_O) $(MYOBJS)
-
-LUAW_T=	luaw_server
-
-
 # Targets start here.
 default: $(PLAT)
 
-all:	$(LUAW_T)
+none:
+	@echo "Please do 'make PLATFORM' where PLATFORM is one of these:"
+	@echo "   $(PLATS)"
 
-o:	$(LUAW_O)
+all: $(LUAW_BIN)
 
-$(LUAW_T): $(LUAW_O)
-	$(CC) -o $@ $(LDFLAGS) $(LUAW_O) $(LIBS)
+$(LUAW_BIN): $(LUAW_OBJS)
+	$(CC) -o $@ $(LDFLAGS) $(LUAW_OBJS) $(LIBS)
 
-clean:
-	$(RM) $(LUAW_T) $(LUAW_O)
-
-depend:
-	@$(CC) $(CFLAGS) -MM l*.c
+clean: 
+	$(RM) $(LUAW_BIN) $(LUAW_OBJS)
 
 echo:
-	@echo "PLAT= $(PLAT)"
 	@echo "CC= $(CC)"
 	@echo "CFLAGS= $(CFLAGS)"
 	@echo "LDFLAGS= $(SYSLDFLAGS)"
@@ -106,11 +94,6 @@ ifndef INSTALL_ROOT
 endif
 
 # Convenience targets for popular platforms
-ALL= all
-
-none:
-	@echo "Please do 'make PLATFORM' where PLATFORM is one of these:"
-	@echo "   $(PLATS)"
 
 aix:
 	$(MAKE) $(ALL) CC="xlc" CFLAGS="-O2" SYSLIBS="-ldl" SYSLDFLAGS="-brtl -bexpall"
@@ -130,7 +113,7 @@ linux:
 	$(MAKE) $(ALL) SYSLIBS="-Wl,-E -ldl"
 
 macosx:
-	$(MAKE) $(ALL) CC=cc $(SYSCFLAGS) $(MYCFLAGS) $(MYLDFLAGS)
+	$(MAKE) $(ALL) CC="cc" $(SYSCFLAGS) $(MYCFLAGS) $(MYLDFLAGS) $(OSXLDFLAGS)
 
 posix:
 	$(MAKE) $(ALL)
@@ -139,7 +122,7 @@ solaris:
 	$(MAKE) $(ALL) SYSLIBS="-ldl"
 
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all $(PLATS) default o a clean depend echo none
+.PHONY: all $(PLATS) default clean echo none
 
 # DO NOT DELETE
 

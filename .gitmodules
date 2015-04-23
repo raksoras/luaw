@@ -1,0 +1,9 @@
+[submodule "deps/libuv"]
+	path = deps/libuv
+	url = https://github.com/libuv/libuv.git
+[submodule "deps/luajit-2.0"]
+	path = deps/luajit-2.0
+	url = http://luajit.org/git/luajit-2.0.git
+[submodule "deps/lua-PUC-Rio"]
+	path = deps/lua-PUC-Rio
+	url = https://github.com/lua/lua.git

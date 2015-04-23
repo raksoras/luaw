@@ -92,10 +92,10 @@ static int number_to_lua(lua_State* L, int read_len, double value) {
 }
 
 LUA_LIB_METHOD int read_number(lua_State* L) {
-    int num_type = luaL_checkint(L, 1);
+    int num_type = luaL_checkinteger(L, 1);
     size_t len;
     const char* buff = luaL_checklstring(L, 2, &len);
-    size_t offset = luaL_checkint(L, 3);
+    size_t offset = luaL_checkinteger(L, 3);
 
     int remaining = len - offset;
     if (remaining < 0) {
@@ -177,10 +177,10 @@ static int string_to_lua(lua_State* L, const char* buff, size_t len) {
 }
 
 LUA_LIB_METHOD int read_string(lua_State* L) {
-    int desired = luaL_checkint(L, 1);
+    int desired = luaL_checkinteger(L, 1);
     size_t len;
     const char* buff = luaL_checklstring(L, 2, &len);
-    size_t offset = luaL_checkint(L, 3);
+    size_t offset = luaL_checkinteger(L, 3);
 
     int remaining = len - offset;
     if (remaining < 0) {
@@ -463,8 +463,8 @@ LUA_LIB_METHOD static int new_lpack_parser(lua_State* L) {
 }
 
 LUA_LIB_METHOD static int create_dict(lua_State* L) {
-    int narr = luaL_checkint(L, 1);
-    int nrec = luaL_checkint(L, 2);
+    int narr = luaL_checkinteger(L, 1);
+    int nrec = luaL_checkinteger(L, 2);
     lua_createtable(L, narr, nrec);
     return 1;
 }
