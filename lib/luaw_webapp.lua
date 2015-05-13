@@ -20,13 +20,28 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
-local Luaw = require("luaw_lib")
+local luaw_utils_lib = require("luaw_utils")
+local luaw_http_lib = require("luaw_http")
+
+local HTTP_METHODS = {
+    GET = "GET",
+    POST = "POST",
+    PUT = "PUT",
+    DELETE = "DELETE",
+    HEAD = "HEAD",
+    OPTIONS = "OPTIONS",
+    TRACE = "TRACE",
+    CONNECT = "CONNECT",
+    SERVICE = "SERVICE"
+}
 
 local registeredWebApps = {}
 
 local DIR_SEPARATOR = string.match (package.config, "[^\n]+")
 local STRING_PATH_PARAM = { start = string.byte(":"), valueOf = tostring }
 local NUM_PATH_PARAM = { start = string.byte("#"), valueOf = tonumber }
+
+TAB = '    '
 
 local function findFiles(path, pattern, matches)
     if (path and pattern) then
@@ -50,9 +65,9 @@ local function findFiles(path, pattern, matches)
     return matches
 end
 
-local pathIterator = Luaw.splitter('/')
+local pathIterator = luaw_utils_lib.splitter('/')
 local function splitPath(path)
-    if not path then return Luaw.nilFn end
+    if not path then return luaw_util_lib.nilFn end
     return pathIterator, path, 0
 end
 
@@ -176,7 +191,7 @@ end
 
 local function dispatchAction(req, resp)
     assert(req, "HTTP request may not be nil")
-    local parsedURL = req:getParsedURL()
+    local parsedURL = req.parsedURL
 
     if not(req.method and  parsedURL) then
         -- EOF in case of persistent connections
@@ -192,7 +207,7 @@ local function dispatchAction(req, resp)
         resp.headers['Connection'] = 'Keep-Alive'
     end
 
-    v1, v2 = action.action(req, resp, pathParams)
+    v1, v2 = action.handler(req, resp, pathParams)
 
     -- handle action returned response, if any
     if v1 then
@@ -226,8 +241,16 @@ local function dispatchAction(req, resp)
     resp:flush()
 end
 
-local function registerAction(webapp, method, path, action)
-    local route = webapp.root
+local function registerResource(resource)
+    local route = assert(webapp.root, "webapp root not defined")
+    local path = assert(resource.path , "Handler definition is missing value for 'path'")
+    local handlerFn = assert(resource.handler, "Handler definition is missing 'handler' function")
+    local method = resource.method or 'SERVICE'
+    if(not HTTP_METHODS[method]) then
+        error(method.." is not a valid HTTP method")
+    end
+
+
     for idx, pseg in splitPath(path) do
         local firstChar = string.byte(pseg)
         local pathParam = nil
@@ -252,77 +275,9 @@ local function registerAction(webapp, method, path, action)
         route = nextRoute
     end
 
-    assert(route, "Could not register action "..path)
-    assert((not route[method]), 'Action already registered for '..method..' for path "/'..webapp.path..'/'..path..'"')
-    action.action = action[1]
-    action[1] = nil
-    route[method] = action
-end
-
-function get(path)
-    return function(route)
-        registerAction(webapp, 'GET', path, route)
-    end
-end
-
-function post(path)
-    return function(route)
-        registerAction(webapp, 'POST', path, route)
-    end
-end
-
-function put(path)
-    return function(route)
-        registerAction(webapp, 'PUT', path, route)
-    end
-end
-
-function delete(path)
-    return function(route)
-        registerAction(webapp, 'DELETE', path, route)
-    end
-end
-
-function head(path)
-    return function(route)
-        registerAction(webapp, 'HEAD', path, route)
-    end
-end
-
-function options(webapp, path)
-    return function(route)
-        registerAction(webapp, 'OPTIONS', path, route)
-    end
-end
-
-function trace(path)
-    return function(route)
-        registerAction(webapp, 'TRACE', path, route)
-    end
-end
-
-function connect(path)
-    return function(route)
-        registerAction(webapp, 'CONNECT', path, route)
-    end
-end
-
-function service(path)
-    return function(route)
-        registerAction(webapp, 'SERVICE', path, route)
-    end
-end
-
-local function declareHTTPglobals()
-    GET = get
-    POST = post
-    PUT = put
-    DELETE = delete
-    HEAD = head
-    OPTIONS = options
-    TRACE = trace
-    CONNECT = connect
-    SERVICE = service
+    assert(route, "Could not register handler for path "..path)
+    assert((not route[method]), 'Handler already registered for '..method..' for path "/'..webapp.path..'/'..path..'"')
+    route[method] = {handler = handlerFn}
 end
 
 local function serviceHTTP(conn)
@@ -330,19 +285,20 @@ local function serviceHTTP(conn)
 
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do
-        local req = Luaw.newServerHttpRequest(conn)
+        local req = luaw_http_lib.newServerHttpRequest(conn)
 
         -- read and parse full request
-        local status, eof = pcall(req.readFull, req)
-        if ((not status)or(eof)) then
+        local status, errmesg = pcall(req.readFull, req)
+        if ((not status)or(req.EOF == true)) then
             conn:close()
             if (status) then
                 return "read time out"
             end
+            print("Error: ", errmesg, debug.traceback())
             return "connection reset by peer"
         end
 
-        local resp = Luaw.newServerHttpResponse(conn)
+        local resp = luaw_http_lib.newServerHttpResponse(conn)
         local status, errMesg = pcall(dispatchAction, req, resp)
 
         if (not status) then
@@ -436,14 +392,14 @@ local function startWebApp(app)
     -- register resources
     local resources = app.resources
     for i,resource in ipairs(resources) do
-        Luaw.formattedLine(".Loading resource "..resource)
-        -- declare global HTTP methods and webapp for the duration of the loadfile(resource)
-        declareHTTPglobals()
+        luaw_utils_lib.formattedLine(".Loading resource "..resource)
+        -- declare globals (registerHandler and webapp) for the duration of the loadfile(resource)
+        registerHandler = registerResource
         webapp = app
         local routeDefn = assert(loadfile(resource), string.format("Could not load resource %s", resource))
         routeDefn()
     end
-    Luaw.formattedLine("#Loaded total "..#resources.." resources\n")
+    luaw_utils_lib.formattedLine("#Loaded total "..#resources.." resources\n")
 
     -- compile views
     local views = app.views
@@ -451,24 +407,24 @@ local function startWebApp(app)
     local appRootLen = string.len(app.appRoot) + 1
     for i,view in ipairs(views) do
         local relativeViewPath = string.sub(view, appRootLen)
-        Luaw.formattedLine(".Loading view "..relativeViewPath)
+        luaw_utils_lib.formattedLine(".Loading view "..relativeViewPath)
         local viewBuff = {}
         local viewDefn = loadView(view, viewBuff)
         local compiledView, errMesg = load(viewDefn, relativeViewPath)
         if (not compiledView) then
-            Luaw.formattedLine("\nError while compiling view: "..view)
-            Luaw.formattedLine("<SOURCE>")
+            luaw_utils_lib.formattedLine("\nError while compiling view: "..view)
+            luaw_utils_lib.formattedLine("<SOURCE>")
             for i, line in ipairs(viewBuff) do
                 print(tostring(i)..":\t"..tostring(line))
             end
-            Luaw.formattedLine("<SOURCE>")
+            luaw_utils_lib.formattedLine("<SOURCE>")
             error(errMesg)
         end
         compiledViews[relativeViewPath] = compiledView()
     end
     app.views = nil
     app.compiledViews = compiledViews
-    Luaw.formattedLine("#Compiled total "..#views.." views")
+    luaw_utils_lib.formattedLine("#Compiled total "..#views.." views")
 end
 
 local function init()
@@ -481,11 +437,11 @@ local function init()
                 if ((attrs)and(attrs.mode == 'directory')) then
                     local webappCfgFile = webappDir..DIR_SEPARATOR..'web.lua'
                     if (lfs.attributes(webappCfgFile, 'mode') == 'file') then
-                        Luaw.formattedLine('Starting webapp '..webappName, 120, '*', '\n')
+                        luaw_utils_lib.formattedLine('Starting webapp '..webappName, 120, '*', '\n')
                         dofile(webappCfgFile) -- defines global variable luaw_webapp
                         local app = loadWebApp(webappName, webappDir)
                         startWebApp(app)
-                        Luaw.formattedLine('Webapp '..webappName..' started', 120, '*')
+                        luaw_utils_lib.formattedLine('Webapp '..webappName..' started', 120, '*')
                         webapp = nil  -- reset global variable
                     end
                 end
@@ -495,7 +451,7 @@ local function init()
 end
 
 -- install REST HTTP app handler as a default request handler
-Luaw.request_handler = serviceHTTP
+luaw_http_lib.request_handler = serviceHTTP
 
 return {
     init = init,

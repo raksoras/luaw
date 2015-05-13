@@ -1,103 +1,101 @@
 # Makefile for building Luaw
-
 # == CHANGE THE SETTINGS BELOW TO SUIT YOUR ENVIRONMENT =======================
 
-# Your platform. See PLATS for possible values.
-PLAT= none
+export UVDIR= deps/libuv
+export UVLIB= deps/libuv/.libs/libuv.a
 
-CC= gcc
-CFLAGS= -O2 -g -Wall $(SYSCFLAGS) $(MYCFLAGS)
-LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
-LIBS= -lm -luv -llua -lpthread $(SYSLIBS) $(MYLIBS)
-
-RM= rm -f
-
-SYSCFLAGS=
-SYSLDFLAGS=
-SYSLIBS=
-
-MYCFLAGS=
-MYLDFLAGS=
-MYLIBS=
-MYOBJS=
+ifeq ($(LUAVM),luajit)
+    export LUADIR= deps/luajit-2.0
+    export LUALIB= deps/luajit-2.0/src/libluajit.a
+    export OSXLDFLAGS= "-Wl,-pagezero_size,10000 -Wl,-image_base,100000000"
+else
+    export LUADIR= deps/lua-PUC-Rio
+    export LUALIB= deps/lua-PUC-Rio/src/liblua.a
+    export OSXLDFLAGS=
+endif
 
 # == END OF USER SETTINGS -- NO NEED TO CHANGE ANYTHING BELOW THIS LINE =======
 
+# Supported platforms
 PLATS= aix ansi bsd freebsd generic linux macosx mingw posix solaris
-
-CORE_O=	http_parser.o lua_lpack.o luaw_common.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
-LUAW_O= $(CORE_O) $(MYOBJS)
-
-LUAW_T=	luaw_server
-
-
-# Targets start here.
-default: $(PLAT)
-
-all:	$(LUAW_T)
-
-o:	$(LUAW_O)
-
-$(LUAW_T): $(LUAW_O)
-	$(CC) -o $@ $(LDFLAGS) $(LUAW_O) $(LIBS)
-
-clean:
-	$(RM) $(LUAW_T) $(LUAW_O)
-
-depend:
-	@$(CC) $(CFLAGS) -MM l*.c
-
-echo:
-	@echo "PLAT= $(PLAT)"
-	@echo "CC= $(CC)"
-	@echo "CFLAGS= $(CFLAGS)"
-	@echo "LDFLAGS= $(SYSLDFLAGS)"
-	@echo "LIBS= $(LIBS)"
-	@echo "RM= $(RM)"
-
-# Convenience targets for popular platforms
 ALL= all
 
-none:
+# Targets start here.
+
+all:
 	@echo "Please do 'make PLATFORM' where PLATFORM is one of these:"
 	@echo "   $(PLATS)"
 
-aix:
-	$(MAKE) $(ALL) CC="xlc" CFLAGS="-O2 -DLUA_USE_POSIX -DLUA_USE_DLOPEN" SYSLIBS="-ldl" SYSLDFLAGS="-brtl -bexpall"
+$(UVLIB): $(UVDIR)/Makefile
+	$(MAKE) -C $(UVDIR)
 
-ansi:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_ANSI"
+$(UVDIR)/Makefile: $(UVDIR)/configure
+	cd $(UVDIR) && ./configure
 
-bsd:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_POSIX -DLUA_USE_DLOPEN" SYSLIBS="-Wl,-E"
+$(UVDIR)/configure: $(UVDIR)/autogen.sh
+	cd $(UVDIR) && sh autogen.sh
 
-freebsd:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_LINUX" SYSLIBS="-Wl,-E"
+$(LUADIR)/src/libluajit.a:
+	$(MAKE) -C $(LUADIR)
 
-generic: $(ALL)
+$(LUADIR)/src/liblua.a:
+	$(MAKE) -C $(LUADIR) $(TARGET)
 
-linux:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_LINUX" SYSLIBS="-Wl,-E -ldl"
+luaw:
+	$(MAKE) -C src $(ALL) SYSLDFLAGS=$(SYSLDFLAGS) CC=$(CC)
 
-macosx:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_MACOSX" CC=cc
+# Convenience targets for popular platforms
 
-posix:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_POSIX"
+aix: TARGET= aix
+aix: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) CC="xlc" CFLAGS="-O2" SYSLIBS="-ldl" SYSLDFLAGS="-brtl -bexpall"
 
-solaris:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_POSIX -DLUA_USE_DLOPEN" SYSLIBS="-ldl"
+ansi: TARGET= ansi
+ansi: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL)
+
+bsd: TARGET= bsd
+bsd: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E"
+
+freebsd: TARGET= freebsd
+freebsd: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E"
+
+linux: TARGET= linux
+linux: SYSLIBS= -Wl,-E -ldl
+linux: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E -ldl"
+
+macosx: TARGET= macosx
+macosx: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) CC="cc" SYSLDFLAGS=$(OSXLDFLAGS)
+
+posix: TARGET= posix
+posix: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL)
+
+solaris: TARGET= solaris
+solaris: $(UVLIB) $(LUALIB)
+	$(MAKE) -C src $(ALL) SYSLIBS="-ldl"
+
+#build objects management
+
+install:
+	$(MAKE) -C src install
+
+install-sample:
+	$(MAKE) -C src install-sample
+
+uninstall:
+	$(MAKE) -C src uninstall
+
+clean: $(UVDIR)/Makefile
+	$(MAKE) -C deps/luajit-2.0 clean
+	$(MAKE) -C deps/lua-PUC-Rio clean
+	$(MAKE) -C $(UVDIR) distclean
+	$(MAKE) -C src clean
 
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all $(PLATS) default o a clean depend echo none
+.PHONY: all check_plat $(LUALIB) $(PLATS) luaw install uninstall clean $(LUADIR)/src/libluajit.a $(LUADIR)/src/liblua.a
 
-# DO NOT DELETE
-
-http_parser.o: http_parser.c http_parser.h
-lua_lpack.o: lua_lpack.c lua_lpack.h luaw_common.h
-luaw_common.o: luaw_common.c luaw_common.h luaw_tcp.h luaw_http_parser.h luaw_timer.h lua_lpack.h lfs.h
-luaw_http_parser.o: luaw_http_parser.c luaw_http_parser.h luaw_common.h luaw_tcp.h
-luaw_server.o: luaw_server.c luaw_common.h luaw_tcp.h
-luaw_tcp.o: luaw_tcp.c luaw_tcp.h luaw_common.h http_parser.h luaw_http_parser.h luaw_tcp.h
-luaw_timer.o: luaw_timer.c luaw_timer.h luaw_common.h
-lfs.o: lfs.c lfs.h

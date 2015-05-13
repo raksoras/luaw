@@ -85,18 +85,17 @@ static void be64(const char* in, char* out) {
     }
 }
 
-static int number_to_lua(lua_State* L, int read_len, double value, int desired_len) {
+static int number_to_lua(lua_State* L, int read_len, double value) {
     lua_pushinteger(L, read_len);
     lua_pushnumber(L, value);
-    lua_pushnumber(L, desired_len);
-    return 3;
+    return 2;
 }
 
 LUA_LIB_METHOD int read_number(lua_State* L) {
-    int num_type = luaL_checkint(L, 1);
+    int num_type = luaL_checkinteger(L, 1);
     size_t len;
     const char* buff = luaL_checklstring(L, 2, &len);
-    size_t offset = luaL_checkint(L, 3);
+    size_t offset = luaL_checkinteger(L, 3);
 
     int remaining = len - offset;
     if (remaining < 0) {
@@ -110,61 +109,61 @@ LUA_LIB_METHOD int read_number(lua_State* L) {
         case UINT_8:
         case STRING:
         case DICT_ENTRY:
-            if (remaining < 1) return number_to_lua(L, 0, 0, 1);
+            if (remaining < 1) return number_to_lua(L, 0, 0);
             uint8_t u = buff[0];
-            return number_to_lua(L, 1, u, 0);
+            return number_to_lua(L, 1, u);
 
         case UINT_16:
         case BIG_STRING:
         case BIG_DICT_ENTRY:
-            if (remaining < 2) return number_to_lua(L, 0, 0, 2);
+            if (remaining < 2) return number_to_lua(L, 0, 0);
             uint16_t u16;
             be16(buff, (char *)&u16);
-            return number_to_lua(L, 2, u16, 0);
+            return number_to_lua(L, 2, u16);
 
         case UINT_32:
         case HUGE_STRING:
-            if (remaining < 4) return number_to_lua(L, 0, 0, 4);
+            if (remaining < 4) return number_to_lua(L, 0, 0);
             uint32_t u32;
             be32(buff, (char *)&u32);
-            return number_to_lua(L, 4, u32, 0);
+            return number_to_lua(L, 4, u32);
 
         case INT_8:
-            if (remaining < 1) return number_to_lua(L, 0, 0, 1);
+            if (remaining < 1) return number_to_lua(L, 0, 0);
             int8_t i = buff[0];
-            return number_to_lua(L, 1, i, 0);
+            return number_to_lua(L, 1, i);
 
         case INT_16:
-            if (remaining < 2) return number_to_lua(L, 0, 0, 2);
+            if (remaining < 2) return number_to_lua(L, 0, 0);
             int16_t i16;
             be16(buff, (char *)&i16);
-            return number_to_lua(L, 2, i16, 0);
+            return number_to_lua(L, 2, i16);
 
         case INT_32:
-            if (remaining < 4) return number_to_lua(L, 0, 0, 4);
+            if (remaining < 4) return number_to_lua(L, 0, 0);
             int32_t i32;
             be32(buff, (char *)&i32);
-            return number_to_lua(L, 4, i32, 0);
+            return number_to_lua(L, 4, i32);
 
         case INT_64:
-            if (remaining < 8) return number_to_lua(L, 0, 0, 8);
+            if (remaining < 8) return number_to_lua(L, 0, 0);
             int64_t i64;
             be64(buff, (char *)&i64);
-            return number_to_lua(L, 8, i64, 0);
+            return number_to_lua(L, 8, i64);
 
         case FLOAT:
             sz = sizeof(float);
-            if (remaining < sz) return number_to_lua(L, 0, 0, sz);
+            if (remaining < sz) return number_to_lua(L, 0, 0);
             float f;
             be32(buff, (char *)&f);
-            return number_to_lua(L, sz, f, 0);
+            return number_to_lua(L, sz, f);
 
         case DOUBLE:
             sz = sizeof(double);
-            if (remaining < sz) return number_to_lua(L, 0, 0, sz);
+            if (remaining < sz) return number_to_lua(L, 0, 0);
             double d;
             be64(buff, (char *)&d);
-            return number_to_lua(L, sz, d, 0);
+            return number_to_lua(L, sz, d);
 
         default:
             return luaL_error(L, "Invalid marker %d specified", num_type);
@@ -178,10 +177,10 @@ static int string_to_lua(lua_State* L, const char* buff, size_t len) {
 }
 
 LUA_LIB_METHOD int read_string(lua_State* L) {
-    int desired = luaL_checkint(L, 1);
+    int desired = luaL_checkinteger(L, 1);
     size_t len;
     const char* buff = luaL_checklstring(L, 2, &len);
-    size_t offset = luaL_checkint(L, 3);
+    size_t offset = luaL_checkinteger(L, 3);
 
     int remaining = len - offset;
     if (remaining < 0) {
@@ -204,6 +203,7 @@ static double fetch_next_as_integer(lua_State* L, int* idx, const char* s) {
     }
     int i = lua_tointeger(L, -1);
     *idx = *idx + 1;
+    lua_pop(L, 1);
     return i;
 }
 
@@ -215,6 +215,7 @@ static double fetch_next_as_double(lua_State* L, int* idx, const char* s) {
     }
     double d = lua_tonumber(L, -1);
     *idx = *idx + 1;
+    lua_pop(L, 1);
     return d;
 }
 
@@ -225,8 +226,14 @@ static const char* fetch_next_as_string(lua_State* L, size_t *len, int* idx, con
         luaL_error(L, "Invalid value found where %s was expected", s);
     }
     *idx = *idx + 1;
+    lua_pop(L, 1);
     return val;
 }
+
+#define CHECK_ROOM(L, pos, need, size)  \
+    if ((pos+need) > size) {            \
+       return luaL_error(L, "Run out of buffer in serialize_write_Q, wrong expected size supplied"); \
+    }
 
 LUA_LIB_METHOD int serialize_write_Q(lua_State* L) {
     if (lua_istable(L, 1) == 0) {
@@ -238,8 +245,12 @@ LUA_LIB_METHOD int serialize_write_Q(lua_State* L) {
         return luaL_error(L, "Invalid write buffer length specified");
     }
 
-    luaL_Buffer buff;
-    luaL_buffinitsize(L, &buff, len);
+    const int buffsize = len + 64;
+    char* buff = (char*) malloc(buffsize);
+    if (buff == NULL) {
+        return luaL_error(L, "Could not allocate memory for serialize_write_Q");
+    }
+    int pos = 0;
 
     int ival;
     double dval;
@@ -248,15 +259,17 @@ LUA_LIB_METHOD int serialize_write_Q(lua_State* L) {
     int16_t i16;
     int32_t i32;
     int64_t i64;
-    char *obuff;
     const char *sval;
     int qLen = lua_rawlen(L, 1);
     int idx = 1;
+    int datasize = 0;
 
     while (idx <= qLen) {
-        /* write marker */
+        // write marker
         int marker = fetch_next_as_integer(L, &idx, "marker");
-        luaL_addchar(&buff, (char)marker);
+        CHECK_ROOM(L, pos, 1, buffsize)
+        buff[pos] = (char)marker;
+        pos++;
 
         switch(marker) {
             case MAP_START:
@@ -270,108 +283,113 @@ LUA_LIB_METHOD int serialize_write_Q(lua_State* L) {
 
             case UINT_8:
             case DICT_ENTRY:
+                datasize = sizeof(uint8_t);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 ival = fetch_next_as_integer(L, &idx, "UINT_8");
-                luaL_addchar(&buff, (uint8_t)ival);
+                buff[pos] = (uint8_t)ival;
+                pos += datasize;
                 break;
 
             case UINT_16:
             case BIG_DICT_ENTRY:
+                datasize = sizeof(uint16_t);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 ival = fetch_next_as_integer(L, &idx, "UINT_16 or BIG_DICT_ENTRY");
                 u16 = (uint16_t)ival;
-                obuff = luaL_prepbuffsize(&buff, sizeof(uint16_t));
-                be16((char *)&u16, obuff);
-                luaL_addsize(&buff, sizeof(uint16_t));
+                be16((char *)&u16, buff+pos);
+                pos += datasize;
                 break;
 
             case UINT_32:
+                datasize = sizeof(uint32_t);
                 ival = fetch_next_as_integer(L, &idx, "UINT_32");
                 u32 = (uint32_t)ival;
-                obuff = luaL_prepbuffsize(&buff, sizeof(uint32_t));
-                be32((char *)&u32, obuff);
-                luaL_addsize(&buff, sizeof(uint32_t));
+                be32((char *)&u32, buff+pos);
+                pos += datasize;
                 break;
 
             case INT_8:
+                datasize = sizeof(int8_t);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 ival = fetch_next_as_integer(L, &idx, "INT_8");
-                luaL_addchar(&buff, (int8_t)ival);
+                buff[pos] = (int8_t)ival;
+                pos += datasize;
                 break;
 
             case INT_16:
+                datasize = sizeof(int16_t);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 ival = fetch_next_as_integer(L, &idx, "INT_16");
                 i16 = (int16_t)ival;
-                obuff = luaL_prepbuffsize(&buff, sizeof(int16_t));
-                be16((char *)&i16, obuff);
-                luaL_addsize(&buff, sizeof(int16_t));
+                be16((char *)&i16, buff+pos);
+                pos += datasize;
                 break;
 
             case INT_32:
+                datasize = sizeof(int32_t);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 ival = fetch_next_as_integer(L, &idx, "INT_32");
                 i32 = (int32_t)ival;
-                obuff = luaL_prepbuffsize(&buff, sizeof(int32_t));
-                be32((char *)&i32, obuff);
-                luaL_addsize(&buff, sizeof(int32_t));
+                be32((char *)&i32, buff+pos);
+                pos += datasize;
                 break;
 
             case INT_64:
+                datasize = sizeof(int64_t);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 dval = fetch_next_as_double(L, &idx, "INT_64");
                 i64 = (int64_t)dval;
-                obuff = luaL_prepbuffsize(&buff, sizeof(int64_t));
-                be64((char *)&i64, obuff);
-                luaL_addsize(&buff, sizeof(int64_t));
+                be64((char *)&i64, buff+pos);
+                pos += datasize;
                 break;
 
             case FLOAT:
+                datasize = sizeof(float);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 dval = fetch_next_as_double(L, &idx, "FLOAT");
                 float f = (float)dval;
-                obuff = luaL_prepbuffsize(&buff, sizeof(float));
-                be32((char *)&f, obuff);
-                luaL_addsize(&buff, sizeof(float));
+                be32((char *)&f, buff+pos);
+                pos += datasize;
                 break;
 
             case DOUBLE:
+                datasize = sizeof(double);
+                CHECK_ROOM(L, pos, datasize, buffsize)
                 dval = fetch_next_as_double(L, &idx, "DOUBLE");
-                obuff = luaL_prepbuffsize(&buff, sizeof(double));
-                be64((char *)&dval, obuff);
-                luaL_addsize(&buff, sizeof(double));
+                be64((char *)&dval, buff+pos);
+                pos += datasize;
                 break;
 
             case STRING:
+                datasize = sizeof(uint8_t);
                 sval = fetch_next_as_string(L, &len, &idx, "STRING");
-                luaL_addchar(&buff, (uint8_t)len);
-                luaL_addlstring (&buff, sval, len);
+                CHECK_ROOM(L, pos, datasize+len, buffsize)
+                buff[pos] = (uint8_t)len;
+                pos += datasize;
+                memcpy(buff+pos, sval, len);
+                pos += len;
                 break;
 
             case BIG_STRING:
+                datasize = sizeof(uint16_t);
                 sval = fetch_next_as_string(L, &len, &idx, "BIG_STRING");
+                CHECK_ROOM(L, pos, datasize+len, buffsize)
                 u16 = (uint16_t)len;
-                obuff = luaL_prepbuffsize(&buff, sizeof(uint16_t));
-                be16((char *)&u16, obuff);
-                luaL_addsize(&buff, sizeof(uint16_t));
-                luaL_addlstring (&buff, sval, len);
+                be16((char *)&u16, buff+pos);
+                pos += datasize;
+                memcpy(buff+pos, sval, len);
+                pos += len;
                 break;
 
             case HUGE_STRING:
+                datasize = sizeof(uint32_t);
                 sval = fetch_next_as_string(L, &len, &idx, "HUGE_STRING");
+                CHECK_ROOM(L, pos, datasize+len, buffsize)
                 u32 = (uint32_t)len;
-                obuff = luaL_prepbuffsize(&buff, sizeof(uint32_t));
-                be32((char *)&u32, obuff);
-                luaL_addsize(&buff, sizeof(uint32_t));
-                luaL_addlstring (&buff, sval, len);
-                break;
-
-            case DICT_URL:
-                sval = fetch_next_as_string(L, &len, &idx, "DICT_URL");
-                luaL_addchar(&buff, (uint8_t)len);
-                luaL_addlstring (&buff, sval, len);
-                break;
-
-            case BIG_DICT_URL:
-                sval = fetch_next_as_string(L, &len, &idx, "BIG_DICT_URL");
-                u16 = (uint16_t)len;
-                obuff = luaL_prepbuffsize(&buff, sizeof(uint16_t));
-                be16((char *)&u16, obuff);
-                luaL_addsize(&buff, sizeof(uint16_t));
-                luaL_addlstring (&buff, sval, len);
+                be32((char *)&u32, buff+pos);
+                pos += datasize;
+                memcpy(buff+pos, sval, len);
+                pos += len;
                 break;
 
             default:
@@ -379,7 +397,8 @@ LUA_LIB_METHOD int serialize_write_Q(lua_State* L) {
         }
     }
 
-    luaL_pushresult(&buff);
+    lua_pushlstring(L, buff, pos);
+    free(buff);
     return 1;
 }
 
@@ -435,14 +454,30 @@ static void define_lapck_types(lua_State* L) {
     LPACK_ENUM_DEF(L, STRING, sizeof(uint8_t), 0, UINT8_MAX);
     LPACK_ENUM_DEF(L, BIG_STRING, sizeof(uint16_t), 0, UINT16_MAX);
     LPACK_ENUM_DEF(L, HUGE_STRING, sizeof(uint32_t), 0, UINT32_MAX);
-
-    LPACK_ENUM_DEF(L, DICT_URL, sizeof(uint8_t), 0, UINT8_MAX);
-    LPACK_ENUM_DEF(L, BIG_DICT_URL, sizeof(uint16_t), 0, UINT16_MAX);
 }
 
-LUA_LIB_METHOD int new_lpack_parser(lua_State* L) {
+LUA_LIB_METHOD static int new_lpack_parser(lua_State* L) {
     lua_createtable(L, 0, 16);
     luaL_setmetatable(L, LUA_LPACK_META_TABLE);
+    return 1;
+}
+
+LUA_LIB_METHOD static int create_dict(lua_State* L) {
+    int narr = luaL_checkinteger(L, 1);
+    int nrec = luaL_checkinteger(L, 2);
+    lua_createtable(L, narr, nrec);
+    return 1;
+}
+
+LUA_LIB_METHOD static int to_hex(lua_State* L) {
+    int num = luaL_checkinteger(L, -1);
+    if (num > 65536) {
+        raise_lua_error(L, "toHex called with input %d, which is larger than acceptable limit", num);
+    }
+
+    char hex[5];
+    sprintf(hex, "%x", num);
+    lua_pushstring(L, hex);
     return 1;
 }
 
@@ -453,10 +488,18 @@ static const struct luaL_Reg luaw_lpack_methods[] = {
     {NULL, NULL}  /* sentinel */
 };
 
+static const struct luaL_Reg luaw_lpack_lib[] = {
+	{"newLPackParser", new_lpack_parser},
+    {"createDict", create_dict},
+    {"toHex", to_hex},
+    {NULL, NULL}  /* sentinel */
+};
 
 void luaw_init_lpack_lib (lua_State *L) {
 	make_metatable(L, LUA_LPACK_META_TABLE, luaw_lpack_methods);
     define_lapck_types(L);
+    luaL_newlib(L, luaw_lpack_lib);
+    lua_setglobal(L, "luaw_lpack_lib");
 }
 
 

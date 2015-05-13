@@ -20,10 +20,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
-local luaw_lib = require("luaw_lib")
-local testing = require("unit_testing")
+local luaw_constants = require("luaw_constants")
 
-local lpackMT = getmetatable(luaw_lib.newLPackParser())
+local lpackMT = getmetatable(luaw_lpack_lib.newLPackParser())
 
 lpackMT.INT_RANGES = {
     lpackMT.UINT_8,
@@ -53,19 +52,6 @@ lpackMT.DICT_ENTRY_RANGES = {
     lpackMT.BIG_DICT_ENTRY
 }
 
-lpackMT.DICT_URL_RANGES = {
-    lpackMT.DICT_URL,
-    lpackMT.BIG_DICT_URL
-}
-
-local lpackArrayMT = {}
-
-local function newArray(size)
-    local arr = luaw_lib.createDict(size, 0)
-    setmetatable(arr, lpackArrayMT)
-    return arr
-end
-
 local function findMinRange(num, ranges)
     for i, range in ipairs(ranges) do
         if ((num >= range[4])and(num <= range[5])) then
@@ -75,30 +61,18 @@ local function findMinRange(num, ranges)
     error("Number "..num.." outside supported max range")
 end
 
-local function setDictionaryForRead(lpack, dict)
-    local dictIndex = luaw_lib.createDict(#dict, 0)
-    for i,w in pairs(dict) do
-        dictIndex[i] = w
-    end
-    lpack.dictionary = dictIndex
-end
-
 -- read functions
 
-local function readNextBuffer(lpack, desiredLen)
-    if lpack.EOF then
-        -- readNextBuffer is called after reaching EOF once
-        lpack.finished = true
-    else
-        if desiredLen < 1024 then desiredLen = 1024 end
-        local newBuffer = lpack:reader(desiredLen)
+local function readNextBuffer(lpack)
+    if not lpack.EOF then
+        local newBuffer = lpack:readFn()
         if not newBuffer then
             lpack.EOF = true
         else
             local buffer = lpack.buffer
             local offset = lpack.offset
             if ((buffer)and(#buffer > offset)) then
-                lpack.buffer = buffer.sub(offset)..newBuffer
+                lpack.buffer = string.sub(buffer, offset)..newBuffer
             else
                 lpack.buffer = newBuffer
             end
@@ -107,10 +81,14 @@ local function readNextBuffer(lpack, desiredLen)
     end
 end
 
+local function done(lpack)
+    return ((lpack.EOF)and(lpack.offset >= #lpack.buffer))
+end
+
 local function readNumber(lpack, numType)
-    while (not lpack.finished) do
+    while (not lpack:done()) do
         local offset = lpack.offset
-        local readLen, value, desiredLen = lpack.read_number(numType, lpack.buffer, offset)
+        local readLen, value = lpack.read_number(numType, lpack.buffer, offset)
         if (readLen < 0) then
             error("Error while reading number at byte# "..tostring(offset).." in buffer: "..tostring(lpack.buffer))
         end
@@ -118,7 +96,7 @@ local function readNumber(lpack, numType)
             lpack.offset = offset + readLen
             return value
         end
-        readNextBuffer(lpack, desiredLen);
+        readNextBuffer(lpack);
     end
 end
 
@@ -128,11 +106,10 @@ end
 
 local function readString(lpack, desiredLen)
     local accm
-    while ((desiredLen > 0)and(not lpack.finished)) do
+    while ((desiredLen > 0)and(not lpack:done())) do
         local offset = lpack.offset
         local buffer = lpack.buffer
-        local readLen, value = lpack.read_string(desiredLen, lpack.buffer, offset)
-
+        local readLen, value = lpack.read_string(desiredLen, buffer, offset)
         if (readLen > 0) then
             lpack.offset = offset + readLen
             desiredLen = desiredLen - readLen
@@ -148,101 +125,70 @@ local function readString(lpack, desiredLen)
             if not accm then accm = {} end
             table.insert(accm, value)
         end
-
-        readNextBuffer(lpack, desiredLen);
+        readNextBuffer(lpack);
     end
 end
 
 local function deserialize(lpack, container, isMap)
-    local key, val, len
+    local key, val, len, t
     local isKey = true
     local dictionary = lpack.dictionary
 
-    while not lpack.finished do
-        local t = readMarker(lpack)
+    while not lpack:done() do
+        t = readMarker(lpack)
 
-        if t == lpack.MAP_START[2] then
-            val = deserialize(lpack, luaw_lib.createDict(0, 16), true)
-            goto processing
-        end
+        if t == lpack.NIL[2] then
+            val = nil
 
-        if t == lpack.ARRAY_START[2] then
-            val = deserialize(lpack, newArray(16), false)
-            goto processing
-        end
+        elseif t == lpack.BOOL_TRUE[2] then
+            val = true
 
-        if t == lpack.DICT_START[2] then
-            dictionary = deserialize(lpack, newArray(64), false)
-            lpack:useDictionary(dictionary)
-            goto last --continue
-        end
+        elseif t == lpack.BOOL_FALSE[2] then
+            val = false
 
-        if t == lpack.RECORD_END[2] then
+        elseif t == lpack.STRING[2] then
+            len = readNumber(lpack, lpack.UINT_8[2])
+            val = readString(lpack, len)
+
+        elseif t == lpack.BIG_STRING[2] then
+            len = readNumber(lpack, lpack.UINT_16[2])
+            val = readString(lpack, len)
+
+        elseif t == lpack.HUGE_STRING[2] then
+            len = readNumber(lpack, lpack.UINT_32[2])
+            val = readString(lpack, len)
+
+        elseif t == lpack.MAP_START[2] then
+            val = deserialize(lpack, luaw_lpack_lib.createDict(0, 16), true)
+
+        elseif t == lpack.ARRAY_START[2] then
+            val = deserialize(lpack, luaw_lpack_lib.createDict(16, 0), false)
+
+        elseif t == lpack.RECORD_END[2] then
             if ((isMap)and(not isKey)) then
                 error("Unbalanced table, key without corresponding value found")
             end
             return container
-        end
 
-        if t == lpack.DICT_URL[2] then
-            --TODO
-        end
-
-        if t == lpack.BIG_DICT_URL[2] then
-            --TODO
-        end
-
-        if t == lpack.NIL[2] then
-            val = nil
-            goto processing
-        end
-
-        if t == lpack.BOOL_TRUE[2] then
-            val = true
-            goto processing
-        end
-
-        if t == lpack.BOOL_FALSE[2] then
-            val = false
-            goto processing
-        end
-
-        if t == lpack.STRING[2] then
-            len = readNumber(lpack, lpack.UINT_8[2])
-            val = readString(lpack, len)
-            goto processing
-        end
-
-        if t == lpack.BIG_STRING[2] then
-            len = readNumber(lpack, lpack.UINT_16[2])
-            val = readString(lpack, len)
-            goto processing
-        end
-
-        if t == lpack.HUGE_STRING[2] then
-            len = readNumber(lpack, lpack.UINT_32[2])
-            val = readString(lpack, len)
-            goto processing
-        end
-
-        if t == lpack.DICT_ENTRY[2] then
+        elseif t == lpack.DICT_ENTRY[2] then
             local dw = readNumber(lpack, lpack.UINT_8[2])
             assert(dictionary, "Missing dictionary")
             val = assert(dictionary[dw], "Entry missing in dictionary: "..dw)
-            goto processing
-        end
 
-        if t == lpack.BIG_DICT_ENTRY[2] then
+        elseif t == lpack.BIG_DICT_ENTRY[2] then
             local dw = readNumber(lpack, lpack.UINT_16[2])
             assert(dictionary, "Missing dictionary")
             val = assert(dictionary[dw], "Entry missing in dictionary")
-            goto processing
+
+        elseif t == lpack.DICT_START[2] then
+            dictionary = deserialize(lpack, luaw_lpack_lib.createDict(64, 0), false)
+            lpack.dictionary = dictionary
+            debugDump(dictionary)
+
+        else
+            -- everything else is a number
+            val = readNumber(lpack, t)
         end
-
-        -- everything else is a number
-        val = readNumber(lpack, t)
-
-        ::processing::
 
         if container then
             if isMap then
@@ -258,79 +204,71 @@ local function deserialize(lpack, container, isMap)
                 table.insert(container, val)
             end
         else
-            -- single, standalone value
-            return val
+            if (t ~= lpack.DICT_START[2]) then
+                -- single, standalone value
+                return val
+            end
         end
-
-        ::last::
     end
 
     return val
 end
 
 local function read(lpack)
-    readNextBuffer(lpack, 1024)
+    readNextBuffer(lpack)
     val = deserialize(lpack, nil, false)
     return val
 end
 
-local function close(lpack)
-    lpack:reader(0, "close")
-end
-
-local function fileReader(fileName)
-    assert(fileName, "File name can not be nil")
-    local f = io.open(fileName, "rb")
-    if not f then
-        error("Could not open file "..fileName.." for reading")
-    end
-
-    return function(lpack, desiredLen, cmd)
-        if (not cmd) then
-            return f:read(desiredLen)
-        end
-        if (cmd == "close") then
-            f:close()
-            f = nil
-        end
-    end
-end
-
-local function stringReader(str)
-    assert(str, "String to read from can not be null")
-    return function(lpack, desiredLen)
-        local temp = str
-        str = nil
-        return temp
-    end
-end
-
-local function newLPackReader(reader)
-    if (type(reader) ~= 'function') then
-        error("Please provide valid function (reader) to read next buffer")
-    end
-
-    local lpackReader = luaw_lib.newLPackParser();
+local function newLPackReader()
+    local lpackReader = luaw_lpack_lib.newLPackParser();
     lpackReader.EOF = false
-    lpackReader.buffer = ""
+    lpackReader.buffer = ''
     lpackReader.offset = 0
-    lpackReader.reader = reader
+    lpackReader.done = done
     lpackReader.read = read
-    lpackReader.close = close
-    lpackReader.useDictionary = setDictionaryForRead
     return lpackReader
 end
 
+local function newLPackStringReader(str)
+    assert(str, "String cannot be null")
+    local lpackReader = newLPackReader()
+    local eof = false
+    lpackReader.readFn = function()
+        if (not eof) then
+            eof = true
+            return str
+        end
+    end
+    return lpackReader
+end
+
+local function newLPackFileReader(file)
+    assert(file, "File cannot be null")
+    local lpackReader = newLPackReader()
+    lpackReader.readFn = function()
+        return file:read(1024)
+    end
+    return lpackReader
+end
+
+local function newLPackReqReader(req)
+    assert(req, "Request cannot be null")
+    local lpackReader = newLPackReader()
+    lpackReader.readFn = function()
+        if ((not req.EOF)and(not req.luaw_mesg_done)) then
+            req:readAndParse()
+            local str =  req:consumeBodyChunkParsed()
+            if (not str) then
+                debugDump(req)
+            end
+            return str
+        end
+    end
+    return lpackReader
+end
 
 -- Write functions
-
-local function setDictionaryForWrite(lpack, dict)
-    local dictIndex = luaw_lib.createDict(#dict, 0)
-    for i,w in pairs(dict) do
-        dictIndex[w] = i
-    end
-    lpack.dictionary = dictIndex
-end
 
 local function flush(lpack)
     local writeQ = lpack.writeQ
@@ -338,7 +276,7 @@ local function flush(lpack)
     if count then
         local str = lpack.serialize_write_Q(writeQ, lpack.writeQsize)
         if str then
-            lpack:writer(str)
+            lpack:writeFn(str)
             lpack.writeQsize = 0
             for i=1,count do
                 writeQ[i] = nil
@@ -354,17 +292,15 @@ local function qstore(lpack, val, size)
 
     local writeQ = lpack.writeQ
     table.insert(writeQ, val);
-    local accSize = lpack.writeQsize + size;
+    lpack.writeQsize = lpack.writeQsize + size;
 
-    if (accSize >= lpack.flushLimit) then
+    if (lpack.writeQsize >= lpack.flushLimit) then
         flush(lpack)
-    else
-        lpack.writeQsize = accSize
     end
 end
 
 local function writeMarker(lpack, marker)
-    if ((marker[2] < lpack.TYPE_MARKER[2])or(marker[2] > lpack.BIG_DICT_URL[2])) then
+    if ((marker[2] < lpack.TYPE_MARKER[2])or(marker[2] > lpack.HUGE_STRING[2])) then
         error("Invalid marker "..marker.." specified")
     end
     qstore(lpack, marker[2], 1)
@@ -383,7 +319,7 @@ local function startDict(lpack)
 end
 
 local function endCollection(lpack)
-    writeMarker(lpack, lpack.RECORD_END, 1)
+    writeMarker(lpack, lpack.RECORD_END)
 end
 
 local function writeBoolean(lpack, value)
@@ -432,26 +368,6 @@ local function writeString(lpack, str)
     qstore(lpack, str, len) -- actual string value/dictionary entry
 end
 
-local function writeDictionary(lpack, dict)
-    assert((type(dict) == 'table'), "Please provide valid dictionary table")
-    local dictionary = luaw_lib.createDict(#dict, 0)
-    writeMarker(lpack, lpack.DICT_START)
-    for i, dw in ipairs(dict) do
-        writeString(lpack, dw)
-        dictionary[dw] = i
-    end
-    writeMarker(lpack, lpack.RECORD_END)
-    lpack.dictionary = dictionary
-end
-
-local function writeDictionaryURL(lpack, url)
-    assert((type(dictURL) == 'string'), "Please provide valid dictionary URL")
-    local len = #url
-    local range = findMinRange(len, lpack.DICT_URL_RANGES)
-    qstore(lpack, range[2], 1) -- marker
-    qstore(lpack, url, len) -- actual URL value
-end
-
 local function serialize(lpack, val)
     local t = type(val)
 
@@ -476,7 +392,7 @@ local function serialize(lpack, val)
     end
 
     if t == 'table' then
-        if (getmetatable(val) == lpackArrayMT) then
+        if (#val > 0) then
             writeMarker(lpack, lpack.ARRAY_START)
             for i, v in ipairs(val) do
                 serialize(lpack, v)
@@ -498,71 +414,64 @@ local function write(lpack, val)
     flush(lpack)
 end
 
-local function close(lpack)
-    return lpack:writer(nil, "close")
+local function setDictionaryForWrite(lpack, dict)
+    assert((type(dict) == 'table'), "Please provide valid dictionary table")
+    local dictionary = luaw_lpack_lib.createDict(#dict, 0)
+    writeMarker(lpack, lpack.DICT_START)
+    for i, dw in ipairs(dict) do
+        writeString(lpack, dw)
+        dictionary[dw] = i
+    end
+    writeMarker(lpack, lpack.RECORD_END)
+    lpack.dictionary = dictionary
 end
 
-local function newLPackWriter(writer)
-    if (type(writer) ~= 'function') then
-        error("Please provide valid function (writer) to write accumulated buffer")
-    end
-
-    local lpackWriter = luaw_lib.newLPackParser()
+local function newLPackWriter(limit)
+    local lpackWriter = luaw_lpack_lib.newLPackParser()
     lpackWriter.writeQ = {}
     lpackWriter.writeQsize = 0
-    lpackWriter.flushLimit = 2048
-    lpackWriter.newArray = newArray
-    lpackWriter.writeDictionaryURL = writeDictionaryURL
-    lpackWriter.writer= writer
-    lpackWriter.write = write
-    lpackWriter.close = close
+    lpackWriter.flushLimit = limit or luaw_constants.CONN_BUFFER_SIZE
     lpackWriter.useDictionary = setDictionaryForWrite
-    lpackWriter.writeDictionary = writeDictionary
+    lpackWriter.write = write
     return lpackWriter
 end
 
-local function fileWriter(fileName)
-    assert(fileName, "File name can not be nil")
-    local f = io.open(fileName, "wb")
-    if not f then
-        error("Could not open file "..fileName.." for writing")
+local function newLPackFileWriter(file, limit)
+    assert(file, "File can not be nil")
+    local lpackWriter = newLPackWriter(limit)
+    lpackWriter.writeFn = function(lpack, str)
+        file:write(str)
     end
-
-    return function(lpack, str, cmd)
-        if (not cmd) then
-            return f:write(str)
-        end
-        if (cmd == "close") then
-            f:close()
-            f = nil
-        end
-    end
+    return lpackWriter
 end
 
-local function stringWriter()
-    local buff = {}
-    local val
-
-    return function(lpack, str, cmd)
-        if (not cmd) then
-            return table.insert(buff, str)
-        end
-        if (cmd == "close") then
-            if (not val) then
-                val = table.concat(buff)
-            end
-            return val
-        end
+local function newLPackBufferWriter(buff, limit)
+    assert(buff, "buffer can not be nil")
+    local lpackWriter = newLPackWriter(limit)
+    lpackWriter.writeFn = function(lpack, str)
+        table.insert(buff, str)
     end
+    return lpackWriter
 end
 
-return {
-    newLPackReader = newLPackReader,
-    newLPackWriter = newLPackWriter,
-    fileReader = fileReader,
-    stringReader = stringReader,
-    fileWriter = fileWriter,
-    stringWriter = stringWriter
-}
+local function newLPackRespWriter(resp, limit)
+    assert(resp, "response can not be nil")
+    local lpackWriter = newLPackWriter(limit)
+    resp.headers['Content-Type'] = 'application/luapack'
+    resp:startStreaming()
+    lpackWriter.writeFn = function(lpack, str)
+        resp:appendBody(str)
+    end
+    return lpackWriter
+end
+
+luaw_lpack_lib.newLPackFileReader = newLPackFileReader
+luaw_lpack_lib.newLPackStringReader = newLPackStringReader
+luaw_lpack_lib.newLPackReqReader = newLPackReqReader
+luaw_lpack_lib.newLPackFileWriter = newLPackFileWriter
+luaw_lpack_lib.newLPackBufferWriter = newLPackBufferWriter
+luaw_lpack_lib.newLPackRespWriter = newLPackRespWriter
+
+return luaw_lpack_lib
 
 

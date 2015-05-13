@@ -41,16 +41,7 @@
 #include "luaw_tcp.h"
 #include "lfs.h"
 
-void clear_read_buffer(connection_t* conn) {
-    if (conn) {
-        conn->read_len = 0L;
-        conn->parse_len = 0L;
-    }
-}
 
-static void clear_write_buffer(connection_t* conn) {
-    if (conn) conn->write_len = 0;
-}
 
 connection_t* new_connection(lua_State* L) {
     connection_t* conn = (connection_t*)calloc(1, sizeof(connection_t));
@@ -80,19 +71,18 @@ connection_t* new_connection(lua_State* L) {
     uv_timer_init(uv_default_loop(), &conn->read_timer);
     conn->read_timer.data = conn;
     INCR_REF_COUNT(conn)
-    clear_read_buffer(conn);
+    conn->read_len = 0;
     conn->lua_reader_tid = 0;
 
     uv_timer_init(uv_default_loop(), &conn->write_timer);
     conn->write_timer.data = conn;
 	INCR_REF_COUNT(conn)
-    clear_write_buffer(conn);
     conn->lua_writer_tid = 0;
 
     return conn;
 }
 
-LUA_LIB_METHOD int new_connection_lua(lua_State* L) {
+LUA_LIB_METHOD static int new_connection_lua(lua_State* L) {
     new_connection(L);
     return 1;
 }
@@ -131,7 +121,7 @@ void close_connection(connection_t* conn, const int status) {
         lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
         lua_pushinteger(l_global, conn->lua_reader_tid);
         if ((status == 0)||(status == UV_EOF)) {
-            lua_pushboolean(l_global, 1);
+            lua_pushboolean(l_global, 0);
             lua_pushliteral(l_global, "EOF");
         } else {
             /* error */
@@ -180,18 +170,6 @@ static void stop_timer(uv_timer_t* timer) {
     }
 }
 
-LUA_OBJ_METHOD static int reset_read_buffer(lua_State* l_thread) {
-    LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-    clear_read_buffer(conn);
-    return 0;
-}
-
-LUA_OBJ_METHOD static int reset_write_buffer(lua_State* l_thread) {
-    LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-    clear_write_buffer(conn);
-    return 0;
-}
-
 LUA_OBJ_METHOD static int close_connection_lua(lua_State* l_thread) {
     LUA_GET_CONN_OR_RETURN(l_thread, 1, conn);
 
@@ -234,6 +212,11 @@ LIBUV_CALLBACK static void on_alloc(uv_handle_t* handle, size_t suggested_size, 
     }
 }
 
+/* Returns
+* 1. tid
+* 2. status: true = succesfull read, false = error
+* 3. string = read string for succesfull read, error message for failure
+*/
 LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     connection_t* conn = GET_CONN_OR_RETURN(stream);
     stop_timer(&conn->read_timer); //clear read timeout if any
@@ -249,16 +232,10 @@ LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t
         /* success: send read bytes to coroutine if one is waiting */
         lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
         lua_pushinteger(l_global, conn->lua_reader_tid);
-        conn->lua_reader_tid = 0;
         lua_pushboolean(l_global, 1);
-
-        conn->read_len += nread;
-        size_t len = PARSE_LEN(conn);
-        if (len == 0) {
-            lua_pushliteral(l_global, "WAIT");
-        } else {
-            lua_pushliteral(l_global, "OK");
-        }
+        lua_pushlstring(l_global, conn->read_buffer, (conn->read_len + nread));
+        conn->lua_reader_tid = 0;
+        conn->read_len = 0L;
         resume_lua_thread(l_global, 3, 2, 0);
         return;
     }
@@ -287,11 +264,9 @@ LUA_OBJ_METHOD static int start_reading(lua_State *l_thread) {
     return 1;
 }
 
-/* lua call spec: status, message = conn:readInternal(tid, readTimeout)
-Success, no EOF: status = true, mesg = "OK"
-Success, EOF: status = true, mesg = "EOF"
-Success, no data available: status = true, mesg = "WAIT"
-Failure: status = false, mesg = error message
+/* Returns
+* 1. status: true for success or no data, false for error
+* 2. str: read string for successful read, NULL if no data, error message for failure
 */
 LUA_OBJ_METHOD static int read_check(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
@@ -301,8 +276,7 @@ LUA_OBJ_METHOD static int read_check(lua_State* l_thread) {
        return error_to_lua(l_thread, "read() called on conn that is not registered to receive read events");
     }
 
-    const size_t len = PARSE_LEN(conn);
-    if (len == 0) {
+    if (conn->read_len == 0) {
         /* empty buffer, record reader tid and block (yield) in lua */
         int lua_reader_tid = lua_tointeger(l_thread, 2);
         if (lua_reader_tid == 0) {
@@ -314,20 +288,14 @@ LUA_OBJ_METHOD static int read_check(lua_State* l_thread) {
         start_timer(&conn->read_timer, readTimeout);
 
         lua_pushboolean(l_thread, 1);
-        lua_pushliteral(l_thread, "WAIT");
+        lua_pushnil(l_thread);
         return 2;
     }
 
     /* data available in buffer */
     lua_pushboolean(l_thread, 1);
-    lua_pushliteral(l_thread, "OK");
+    lua_pushlstring(l_thread, conn->read_buffer, conn->read_len);
     return 2;
-}
-
-static int get_write_buffer_len(lua_State* l_thread) {
-    LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-    lua_pushinteger(l_thread, conn->write_len);
-    return 1;
 }
 
 LIBUV_API static void on_write(uv_write_t* req, int status) {
@@ -342,8 +310,7 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
             lua_pushinteger(l_global, conn->lua_writer_tid);
             conn->lua_writer_tid = 0;
             lua_pushboolean(l_global, 1);
-            lua_pushinteger(l_global,  conn->write_len);
-            clear_write_buffer(conn);
+            lua_pushinteger(l_global, 1);
             resume_lua_thread(l_global, 3, 2, 0);
         }
         /* Unlike libuv handles, libuv requests do not support uv_close(). Therefore we increment
@@ -352,41 +319,30 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
     }
 }
 
-/* lua call spec: conn:write(tid, writeTimeout, isChunked)
+/* lua call spec: conn:write(tid, str, writeTimeout)
 Success: status(true), nwritten
 Failure: status(false), error message
 */
 LUA_OBJ_METHOD static int write_buffer(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-    conn->lua_writer_tid = 0;
 
-    if (conn->write_len > 0) {
+    int lua_writer_tid = lua_tointeger(l_thread, 2);
+    if (lua_writer_tid == 0) {
+        return error_to_lua(l_thread, "write() specified invalid thread id");
+    }
+
+    size_t len = 0;
+    const char* buff = lua_tolstring(l_thread, 3, &len);
+
+    if (len > 0) {
         /* non empty write buffer. Send write request, record writer tid and block in lua */
-        int lua_writer_tid = lua_tointeger(l_thread, 2);
-        if (lua_writer_tid == 0) {
-            return error_to_lua(l_thread, "write() specified invalid thread id");
-        }
+        int writeTimeout = lua_tointeger(l_thread, 4);
 
-        int writeTimeout = lua_tointeger(l_thread, 3);
-        int isChunked = lua_toboolean(l_thread, 4);
-        int err_code = 0;
+        uv_buf_t write_buff;
+        write_buff.base = (char*) buff;
+        write_buff.len = len;
 
-        if (isChunked)  {
-            uv_buf_t buffs[3];
-            buffs[0].base = conn->chunk_header;
-            buffs[0].len = sprintf(conn->chunk_header, "%zx\r\n", conn->write_len);
-            buffs[1].base = conn->write_buffer;
-            buffs[1].len = conn->write_len;
-            buffs[2].base = "\r\n";
-            buffs[2].len = 2;
-            err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, buffs, 3, on_write);
-        } else {
-            uv_buf_t buff;
-            buff.base = conn->write_buffer;
-            buff.len = conn->write_len;
-            err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, &buff, 1, on_write);
-        }
-
+        int err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, &write_buff, 1, on_write);
         if (err_code) {
             close_connection(conn, err_code);
             lua_pushboolean(l_thread, 0);
@@ -401,46 +357,7 @@ LUA_OBJ_METHOD static int write_buffer(lua_State* l_thread) {
     }
 
     lua_pushboolean(l_thread, 1);
-    lua_pushinteger(l_thread, conn->write_len);
-    return 2;
-}
-
-/* Fill conn's write buffer with the input string passed. Multiple consecutive fill_buffer()
-* calls append passed in strings inside conn's write buffer. If the buffer is too full to
-* copy input string in its entirety, it copies whatever fraction of the input it can and
-* returns the remaining part that could not be fit inside the buffer.
-*
-* Lua call spec:
-* Success: remaining buffer capacity, part of the string that could not fit = conn:appendBuffer("...")
-*          - when input fits in the buffer completely second return value is nil
-* Failure: status(false), error message = conn:appendBuffer()
-*/
-LUA_OBJ_METHOD static int append_buffer(lua_State* l_thread) {
-    LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-
-    size_t input_len = 0;
-    const char* input = lua_tolstring(l_thread, 2, &input_len);
-
-    size_t buff_cap = CONN_BUFFER_SIZE - conn->write_len;
-    if (input == NULL) {
-        lua_pushinteger(l_thread, buff_cap);
-        lua_pushnil(l_thread);
-        return 2;
-    }
-
-    size_t fit_len = (input_len <= buff_cap) ? input_len : buff_cap;
-    size_t remaining_input_len = input_len - fit_len;
-
-    char* dest = conn->write_buffer + conn->write_len;
-    memcpy(dest, input, fit_len);
-    conn->write_len += fit_len;
-
-    lua_pushinteger(l_thread, (CONN_BUFFER_SIZE - conn->write_len));
-    if (remaining_input_len > 0) {
-        lua_pushlstring(l_thread, (input + fit_len), remaining_input_len);
-    } else {
-        lua_pushnil(l_thread);
-    }
+    lua_pushinteger(l_thread, len);
     return 2;
 }
 
@@ -462,7 +379,6 @@ LIBUV_CALLBACK static void on_client_connect(uv_connect_t* connect_req, int stat
         lua_pushnil(l_global);
     }
 
-    clear_write_buffer(conn);
     resume_lua_thread(l_global, 3, 2, 0);
 }
 
@@ -470,7 +386,7 @@ LIBUV_CALLBACK static void on_client_connect(uv_connect_t* connect_req, int stat
 Success: conn
 Failure: false, error message
 */
-LUA_LIB_METHOD int client_connect(lua_State* l_thread) {
+LUA_LIB_METHOD static int client_connect(lua_State* l_thread) {
     const char* ip4 = luaL_checkstring(l_thread, 1);
 
     int port = lua_tointeger(l_thread, 2);
@@ -536,7 +452,7 @@ LIBUV_CALLBACK static void on_resolved(uv_getaddrinfo_t *resolver, int status, s
     resume_lua_thread(l_global, 3, 2, 0);
 }
 
-LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {
+LUA_LIB_METHOD static int dns_resolve(lua_State* l_thread) {
     const char* hostname = luaL_checkstring(l_thread, 1);
 
     int lua_tid = lua_tointeger(l_thread, 2);
@@ -575,20 +491,27 @@ LUA_LIB_METHOD int dns_resolve(lua_State* l_thread) {
     return 1;
 }
 
+
 static const struct luaL_Reg luaw_connection_methods[] = {
 	{"startReading", start_reading},
 	{"read", read_check},
-	{"writeBufferLength", get_write_buffer_len},
-	{"clearReadBuffer", reset_read_buffer},
-	{"clearWriteBuffer", reset_write_buffer},
-	{"appendBuffer", append_buffer},
 	{"write", write_buffer},
 	{"close", close_connection_lua},
 	{"__gc", connection_gc},
 	{NULL, NULL}  /* sentinel */
 };
 
+static const struct luaL_Reg luaw_tcp_lib[] = {
+	{"newConnection", new_connection_lua},
+	{"connect", client_connect},
+	{"resolveDNS", dns_resolve},
+    {NULL, NULL}  /* sentinel */
+};
+
+
 void luaw_init_tcp_lib (lua_State *L) {
 	make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
+    luaL_newlib(L, luaw_tcp_lib);
+    lua_setglobal(L, "luaw_tcp_lib");
 }
 

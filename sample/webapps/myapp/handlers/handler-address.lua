@@ -1,5 +1,8 @@
-GET 'address/:city/#zip' {
-    function(req, resp, pathParams)
+registerHandler {
+    method = 'GET',
+    path = 'address/:city/#zip',
+
+    handler = function(req, resp, pathParams)
         address = {
             city = pathParams.city,
             zip = pathParams.zip

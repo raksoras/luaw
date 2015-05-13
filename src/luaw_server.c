@@ -36,6 +36,7 @@
 
 #include "uv.h"
 #include "luaw_common.h"
+#include "luaw_logging.h"
 #include "luaw_tcp.h"
 #include "lfs.h"
 
@@ -84,9 +85,9 @@ static void handle_shutdown_req(uv_signal_t* handle, int signum) {
 }
 
 void init_luaw_server(lua_State* L) {
-    lua_getglobal(L, "Luaw");
+    lua_getglobal(L, "luaw_http_lib");
     if (!lua_istable(L, -1)) {
-        fprintf(stderr, "Luaw library not initialized\n");
+        fprintf(stderr, "Luaw HTTP library not initialized\n");
         exit(EXIT_FAILURE);
     }
 
@@ -96,10 +97,11 @@ void init_luaw_server(lua_State* L) {
         exit(EXIT_FAILURE);
     }
     service_http_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_pop(L, 1);
 
-    lua_getfield(L, -1, "scheduler");
+    lua_getglobal(L, "luaw_scheduler");
     if (!lua_istable(L, -1)) {
-        fprintf(stderr, "luaw scheduler not initialized\n");
+        fprintf(stderr, "Luaw scheduler not initialized\n");
         exit(EXIT_FAILURE);
     }
 
@@ -126,6 +128,7 @@ void init_luaw_server(lua_State* L) {
         fprintf(stderr, "runReadyThreads function not found in luaw scheduler\n");
         exit(EXIT_FAILURE);
     }
+    lua_pop(L, 1);
 
     lua_getglobal(L, "luaw_server_config");
     if (lua_istable(L, -1)) {
@@ -141,8 +144,11 @@ void init_luaw_server(lua_State* L) {
             lua_pop(L, 1);
         }
 
-        lua_pop(L, 1);
+        lua_pop(L, 1);  //pop luaw_server_config object
     }
+
+    lua_pushnumber(L, CONN_BUFFER_SIZE);
+    lua_setglobal(L, "CONN_BUFFER_SIZE");
 
     event_loop = uv_default_loop();
 }
@@ -249,7 +255,12 @@ static void run_lua_file(const char* filename, char* epilogue) {
     }
     lb.epilogue = epilogue;
 
-    int status = lua_load(l_global, lua_file_reader, &lb, filename, "t");
+    #ifdef COMPAT52_IS_LUAJIT
+        int status = lua_load(l_global, lua_file_reader, &lb, filename);
+    #else
+        int status = lua_load(l_global, lua_file_reader, &lb, filename, "t");
+    #endif
+
     if (status != LUA_OK) {
         fprintf(stderr, "Error while loading file: %s\n", filename);
         fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
@@ -285,11 +296,9 @@ int main (int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	luaL_checkversion(l_global);
-
     lua_gc(l_global, LUA_GCSTOP, 0);  /* stop collector during initialization */
     luaL_openlibs(l_global);  /* open libraries */
-    luaw_open_lib(l_global);
+    luaw_init_libs(l_global);
     luaopen_lfs(l_global);
     lua_gc(l_global, LUA_GCRESTART, 0);
 

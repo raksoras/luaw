@@ -57,11 +57,8 @@ typedef enum {
     /* variable length types */
     STRING,
     BIG_STRING,
-    HUGE_STRING,
-    DICT_URL,
-    BIG_DICT_URL
+    HUGE_STRING
 }
 type_tag;
 
 extern void luaw_init_lpack_lib (lua_State *L);
-extern int new_lpack_parser(lua_State* L);

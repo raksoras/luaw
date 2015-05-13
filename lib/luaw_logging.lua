@@ -20,8 +20,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
-local luaw_lib = require("luaw_lib")
 local ds_lib = require('luaw_data_structs_lib')
+local luaw_utils_lib = require("luaw_utils")
+local luapack_lib = require('luapack')
 
 local log_module = {}
 
@@ -79,9 +80,9 @@ local logLineTimeFormat = luaw_log_config.log_line_timestamp_format or "%x %X"
 local logFileNameTimeFormat = luaw_log_config.log_filename_timestamp_format or '%Y%m%d-%H%M%S'
 
 local syslogTag = luaw_log_config.syslog_tag or 'luaw'
-local syslogPresent = Luaw.syslogConnect(luaw_log_config.syslog_server, luaw_log_config.syslog_port)
+local syslogPresent = luaw_logging_lib.syslogConnect(luaw_log_config.syslog_server, luaw_log_config.syslog_port)
 logRoot.facility = luaw_log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
-local hostname = Luaw.hostname()
+local hostname = luaw_logging_lib.hostname()
 
 
 local logSequenceNum = 0
@@ -106,7 +107,7 @@ local function nextLogSequenceNum()
 end
 
 local function concatLogLines()
-    local temp = Luaw.createDict(logBuffer.filled+1, 0)
+    local temp = luapack_lib.createDict(logBuffer.filled+1, 0)
     local i = 1
     local logLine = logBuffer:take()
     while logLine do
@@ -122,32 +123,32 @@ local function logToFile(logLine)
     local added = logBuffer:offer(currentTimeStr..' '..logLine)
     if not added then noOfLogLinesDropped = noOfLogLinesDropped +1 end
 
-    local state = Luaw.logState()
+    local state = luaw_logging_lib.logState()
 
     if ((state == LOG_IS_OPEN)and(logBuffer.filled >= noOfLogLinesToBuffer)) then
         local logBatch = concatLogLines()
         logSize = logSize + string.len(logBatch)
         local rotateLog = (logSize >= logfileSizeLimit)
-        state = Luaw.writeLog(logBatch, rotateLog)
+        state = luaw_logging_lib.writeLog(logBatch, rotateLog)
     end
 
     if (state == LOG_NOT_OPEN) then
         logSize = 0
         local ts = os.date(logFileNameTimeFormat, os.time())
         local fileName = logDir..PATH_SEPARATOR..logfileBaseName..'-'..ts..'-'..nextLogSequenceNum()..'.log'
-        Luaw.openLog(fileName)
+        luaw_logging_lib.openLog(fileName)
     end
 end
 
 local function syslog(priority, facility, mesg)
     local pri = priority + (facility * 8)
     local logLine = string.format("<%d>%s %s %s: %s", pri, syslogTimeStr, hostname, syslogTag, mesg)
-    Luaw.syslogSend(logLine);
+    luaw_logging_lib.syslogSend(logLine);
 end
 
-local nameIterator = Luaw.splitter('.')
+local nameIterator = luaw_utils_lib.splitter('.')
 local function splitName(name)
-    if not name then return Luaw.nilFn end
+    if not name then return luaw_utils_lib.nilFn end
     return nameIterator, name, 0
 end
 
