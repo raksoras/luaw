@@ -23,6 +23,7 @@ Luaw is an event driven, non blocking IO based HTTP application server inspired 
 8. Support for user timers for implementing periodic cron like jobs inside Luaw server.
 9. Log4j like logging framework with configurable log levels, log file size limits and automatic log rotation that integrates with syslog out of the box.
 10. [MessagePack](http://msgpack.org/) like library to efficiently serialize/deserialize arbitrarily complex data into compact and portable binary format for remote web service calls.
+11. Built in multipart file upload support.
 
 
 ##How To Build
