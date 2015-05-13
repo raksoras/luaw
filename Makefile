@@ -65,7 +65,7 @@ freebsd: $(UVLIB) $(LUALIB)
 linux: TARGET= linux
 linux: SYSLIBS= -Wl,-E -ldl
 linux: $(UVLIB) $(LUALIB)
-	$(MAKE) -C src $(ALL) SYSLIBS="-Wl,-E -ldl"
+	$(MAKE) -C src $(ALL) SYSLIBS="-lrt -Wl,-E -ldl"
 
 macosx: TARGET= macosx
 macosx: $(UVLIB) $(LUALIB)
