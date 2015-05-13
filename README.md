@@ -27,40 +27,38 @@ Luaw is an event driven, non blocking IO based HTTP application server inspired 
 
 ##How To Build
 ***
-Luaw github repositories includes all its dependencies (libuv, luaJit and PUC-Rio Lua distribution) as git submodules so you can build Luaw along with all its dependencies in one step. Luaw can be built to use standard stock Lua vm (PUC-Rio) or LuaJit.
+1. Get necessary build tools. libuv, one of the Luaw dependencies uses autotools, autoconf and libtoolize in its build system. If your machine is not already setup with these, you can use following steps to get these tools. 
 
-1. Get necessary build tools
-libuv, one of the dependencies of Luaw uses autotools, autoconf and libtoolize in its build system. If your machine is not already setup with these, you can use following steps to get these tools. 
-
+        sudo apt-get install make
         sudo apt-get install autotools-dev
         sudo apt-get install autoconf
         sudo apt-get install build-essential libtool
         
 
-1. Clone Luaw repository
+2. Clone Luaw repository
 
         git clone --recursive https://github.com/raksoras/luaw.git
         
-2. Build Luaw using standard (PUC-Rio) Lua VM
+3. Build Luaw to use standard [PUC-Rio Lua VM](http://www.lua.org/)
 
         cd luaw
         make linux
         
-or, build Luaw using LuaJit VM
+    or, build Luaw to use [LuaJit VM](http://luajit.org/)
 
         cd luaw
         make LUAVM=luajit linux
         
-While building on mac OS use target "macosx". For example
+    While building on mac OS use target "macosx". For example
 
         cd luaw
         make LUAVM=luajit macosx
         
-3. Install Luaw binary - luaw_server - in directory of your choice. We will use `~/luawsample` in all our examples going forward as a directory of choice for Luaw installation
+4. Install Luaw binary - luaw_server - in directory of your choice. We will use `~/luawsample` in all our examples going forward as a directory of choice for Luaw installation
 
         make INSTALL_ROOT=~/luawsample install
         
-To install binaries along with sample app
+    To install binaries along with the sample app provided
 
         make INSTALL_ROOT=~/luawsample install-sample
         
