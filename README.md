@@ -27,77 +27,44 @@ Luaw is an event driven, non blocking IO based HTTP application server inspired 
 
 ##How To Build
 ***
-Let's build Luaw from its sources. Luaw depends on,
+Luaw github repositories includes all its dependencies (libuv, luaJit and PUC-Rio Lua distribution) as git submodules so you can build Luaw along with all its dependencies in one step. Luaw can be built to use standard stock Lua vm (PUC-Rio) or LuaJit.
 
-1. Lua 5.2(+)
-2. libuv (v1.0.0 )
-
-We will first build these dependencies from their sources and then finally build Luaw itself. To build these artifacts you would need [Git](http://git-scm.com/),  [Make](http://www.gnu.org/software/make/) and [autotools](http://www.gnu.org/software/automake/manual/html_node/Autotools-Introduction.html) setup on your machine.
-
-##Building Lua 5.2
-Lua sources can be downloaded from [here](http://www.lua.org/download.html). Here are the steps to download Lua 5.2 sources and build it for Linux:
-
-    curl -R -O http://www.lua.org/ftp/lua-5.2.3.tar.gz
-    tar zxf lua-5.2.3.tar.gz
-    cd lua-5.2.3
-    make linux test
-    sudo make linux install
-
-To build for other OSes replace "linux" from the last two make commands with the OS you are building for. For example for when building for Mac OS run,
-
-    make macosx test
-    sudo make macosx install
-
-To see what OSes are supported run ./lua-5.2.3/src/Makefile targets
-
-
-##Building libuv
-Luaw uses node.js library libuv to do asynchronous, event based IO in a portable, cross platform  manner. To build libuv:
-
-1. first clone libuv repository
-
-        git clone https://github.com/libuv/libuv.git
-        
-2. Checkout latest stable release of libuv from the cloned local repository. As of this writing the latest stable release is v1.0.0 and Luaw is verified to compile and run successfully with v1.0.0 release of libuv.
-
-        cd libuv
-        git checkout tags/v1.0.0
-        
-3. libuv uses autotools, autoconf and libtoolize in its build system. If you machine is not already setup with these, you can use following steps to get these tools. Otherwise skip to step 4 below.
+1. Get necessary build tools
+libuv, one of the dependencies of Luaw uses autotools, autoconf and libtoolize in its build system. If your machine is not already setup with these, you can use following steps to get these tools. 
 
         sudo apt-get install autotools-dev
         sudo apt-get install autoconf
         sudo apt-get install build-essential libtool
         
-4. Build libuv. Detailed instructions are [here](https://github.com/joyent/libuv#build-instructions)
-        
-        sh autogen.sh
-        ./configure
-        make
-        make check
-        sudo make install
-
-## Building Luaw
-With all dependencies built, now we are ready to build Luaw itself.
 
 1. Clone Luaw repository
 
-        git clone https://github.com/raksoras/luaw.git
+        git clone --recursive https://github.com/raksoras/luaw.git
         
-2. Build Luaw
+2. Build Luaw using standard (PUC-Rio) Lua VM
 
-        cd luaw/src
+        cd luaw
         make linux
+        
+or, build Luaw using LuaJit VM
+
+        cd luaw
+        make LUAVM=luajit linux
+        
+While building on mac OS use target "macosx". For example
+
+        cd luaw
+        make LUAVM=luajit macosx
         
 3. Install Luaw binary - luaw_server - in directory of your choice. We will use `~/luawsample` in all our examples going forward as a directory of choice for Luaw installation
 
         make INSTALL_ROOT=~/luawsample install
         
-4. Note: On Mac running Yosemite version of Mac OS you may have to run,
+To install binaries along with sample app
 
-        make SYSCFLAGS=-I/usr/local/include SYSLDFLAGS=-L/usr/local/lib macosx
-        make INSTALL_ROOT=~/luawsample install
-
+        make INSTALL_ROOT=~/luawsample install-sample
+        
+    
 
 ##Luaw directory structure
 
