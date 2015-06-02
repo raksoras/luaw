@@ -21,6 +21,8 @@ SOFTWARE.
 ]]
 
 local constants = require('luaw_constants')
+local scheduler = require("luaw_scheduler")
+
 local TS_BLOCKED_EVENT = constants.TS_BLOCKED_EVENT
 
 

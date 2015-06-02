@@ -58,7 +58,6 @@ typedef struct {
     char* epilogue;
 } lua_load_buffer_t;
 
-uv_prepare_t user_thread_runner;
 
 static const char* lua_file_reader(lua_State* L, void* data, size_t* size) {
     lua_load_buffer_t *lb = (lua_load_buffer_t*)data;
@@ -210,16 +209,14 @@ void start_server(lua_State *L) {
     uv_signal_start(&shutdown_signal, handle_shutdown_req, SIGHUP);
 }
 
-static void run_user_threads(uv_prepare_t* handle) {
+static void run_user_threads() {
     /* do the bottom half processing, run ready user threads that are waiting */
     lua_rawgeti(l_global, LUA_REGISTRYINDEX, run_ready_threads_fn_ref);
     int status = lua_pcall(l_global, 0, 1, 0);
-
     if (status != LUA_OK) {
-        fprintf(stderr,"Error while running user threads for bottom half processing: %s\n", lua_tostring(l_global, -1));
+        fprintf(stderr,"Error running user threads for bottom half processing: %s\n", lua_tostring(l_global, -1));
         uv_stop(event_loop);
     }
-
     lua_settop(l_global, 0);
 }
 
@@ -230,11 +227,12 @@ static void close_walk_cb(uv_handle_t* handle, void* arg) {
 }
 
 static int server_loop(lua_State *L) {
-    uv_prepare_init(event_loop, &user_thread_runner);
-    uv_prepare_start(&user_thread_runner, run_user_threads);
-
-    int status = uv_run(event_loop, UV_RUN_DEFAULT);
-
+    int status = 1;
+    while (status) {
+        status = uv_run(event_loop, UV_RUN_ONCE);
+        run_user_threads();
+    }
+    
     /* clean up resources used by the event loop and Lua */
     uv_walk(event_loop, close_walk_cb, NULL);
     uv_run(event_loop, UV_RUN_ONCE);

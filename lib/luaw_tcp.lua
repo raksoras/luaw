@@ -23,6 +23,7 @@ SOFTWARE.
 local constants = require('luaw_constants')
 local scheduler = require('luaw_scheduler')
 
+local TS_BLOCKED_EVENT = constants.TS_BLOCKED_EVENT
 local DEFAULT_CONNECT_TIMEOUT = constants.DEFAULT_CONNECT_TIMEOUT
 local DEFAULT_READ_TIMEOUT = constants.DEFAULT_READ_TIMEOUT
 local DEFAULT_WRITE_TIMEOUT = constants.DEFAULT_WRITE_TIMEOUT
