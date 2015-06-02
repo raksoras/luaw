@@ -29,4 +29,15 @@ luaw_timer = require("luaw_timer")
 luaw_http = require("luaw_http")
 luaw_webapp = require("luaw_webapp")
 
+local function chronometer(step)
+    local timer = luaw_timer.newTimer()
+    while (true) do
+        timer:sleep(step)
+        luaw_scheduler.updateCurrentTime(os.time())
+    end
+end
+
+luaw_scheduler.updateCurrentTime(os.time())
+luaw_scheduler.startUserThread(chronometer, 200)
+
 luaw_webapp.init()
