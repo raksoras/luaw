@@ -200,38 +200,38 @@ local function handleKeepAlive(req, keepAlive)
     end
 end
 
-local function onNone(req, cbType)
+local function onNone(req, parser)
 end
 
-local function onMesgBegin(req, cbtype, remaining)
+local function onMesgBegin(req, parser)
     req:reset()
 end
 
-local function onStatus(req, cbtype, remaining ,status)
-	accumulateChunkedValue(req, 'statusMesg', status)
+local function onStatus(req, parser)
+	accumulateChunkedValue(req, 'statusMesg', parser:getParsedChunk())
 end
 
-local function onURL(req, cbtype, remaining, url)
-	accumulateChunkedValue(req, 'url', url)
+local function onURL(req, parser)
+	accumulateChunkedValue(req, 'url', parser:getParsedChunk())
 end
 
-local function onHeaderName(req, cbtype, remaining, hName)
+local function onHeaderName(req, parser)
 	handleAccHttpHeader(req)
-    accumulateChunkedValue(req, '_acc_header_name_', hName)
+    accumulateChunkedValue(req, '_acc_header_name_', parser:getParsedChunk())
 end
 
-local function onHeaderValue(req, cbtype, remaining, hValue)
+local function onHeaderValue(req, parser)
 	if not hValue then hValue = '' end -- empty header value
-	accumulateChunkedValue(req, '_acc_header_value_', hValue)
+	accumulateChunkedValue(req, '_acc_header_value_', parser:getParsedChunk())
 end
 
-local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
+local function onHeadersComplete(req, parser)
 	handleAccHttpHeader(req)
-	handleKeepAlive(req, keepAlive)
-	req.major_version = httpMajor
-	req.minor_version = httpMinor
-    req.method = method
-    req.status = status
+	handleKeepAlive(req, parser:shouldKeepAlive())
+	req.major_version = parser:getHttpMajorVersion()
+	req.minor_version = parser:getHttpMinorVersion()
+    req.method = parser:getReqMethod()
+    req.status = parser:getRespStatus()
 
     -- parse URL
     local url = req.url
@@ -255,20 +255,17 @@ local function onHeadersComplete(req, cbtype, remaining, keepAlive, httpMajor, h
     req.luaw_headers_done = true
 end
 
-local function onBody(req, cbtype, remaining, chunk)
-    req.bodyParts:append(chunk)
+local function onBody(req, parser)
+    req.bodyParts:append(parser:getParsedChunk())
 end
 
-local function onMesgComplete(req, cbtype, remaining, keepAlive)
+local function onMesgComplete(req, parser)
 	-- for the rare boundary case of chunked transfer encoding, where headers may continue
 	-- after the last body chunk
 	handleAccHttpHeader(req)
-	handleKeepAlive(req, keepAlive)
-	local luaw_parser = req.luaw_parser
-    if (luaw_parser) then
-        luaw_parser:initHttpParser()
-    end
-
+	handleKeepAlive(req, parser:shouldKeepAlive())
+    parser:initHttpParser()
+    
     -- store body
     local bodyParts = req.bodyParts
     req.body = bodyParts:concat()
@@ -297,13 +294,11 @@ local http_callbacks_lua = {
     onMesgComplete
 }
 
-local function parseHttpFragment(req, conn, parser, content, offset)
-    -- matched against most number of return results possible. Actual variable names
-    -- are meaningless without the context of correct callback, misleading even!
-    local cbtype, offset, keepAlive, httpMajor, httpMinor, method, status = parser:parseHttp(content, offset)
+local function parseHttpFragment(req, conn, parser)
+    local cbtype, remaining = parser:parseHttp(conn)
     if (not cbtype) then
         conn:close()
-        return error(offset) -- offset carries error message in this case
+        return error(remaining) -- remaining carries error message in this case
     end
 
     local callback = http_callbacks_lua[cbtype]
@@ -312,50 +307,29 @@ local function parseHttpFragment(req, conn, parser, content, offset)
         return error("Invalid HTTP parser callback# "..tostring(cbtype).." requested")
     end
 
-    callback(req, cbtype, remaining, keepAlive, httpMajor, httpMinor, method, status)
-    return  cbtype, offset
-end
-
-local function hasContent(content, offset)
-    return (content)and(offset)and(offset < #content)
+    callback(req, parser)
 end
 
 local function readAndParse(req)
     local conn = req.luaw_conn
     local parser = req.luaw_parser
-    local content = req.luaw_read_content
-    local offset = req.luaw_read_offset
-    local httpcb, status
 
-    if (not hasContent(content, offset)) then
+    if (conn:readLength() == 0) then
         -- read new content from socket
-        status, content = conn:read(req.readTimeout)
+        status, mesg = conn:read(req.readTimeout)
         if (not status) then
-            if (content == 'EOF') then
+            if (mesg == 'EOF') then
                 req:addHeader('Connection', 'close')
-                req.luaw_read_content = nil
-                req.luaw_read_offset = nil
                 req.luaw_headers_done = true
                 req.luaw_mesg_done = true
                 req.EOF = true
                 return
             else
-                return error(content)
+                return error(mesg)
             end
         end
-        offset = 0 -- offset is for C, therefore zero based
     end
-
-    httpcb, offset = parseHttpFragment(req, conn, parser, content, offset)
-
-    if (hasContent(content,offset)) then
-        -- store back remaining content in request object for next HTTP request parsing
-        req.luaw_read_content = content
-        req.luaw_read_offset = offset
-    else
-        req.luaw_read_content = nil
-        req.luaw_read_offset = nil
-    end
+    parseHttpFragment(req, conn, parser)
 end
 
 local function consumeTill(input, search, offset)
@@ -406,7 +380,7 @@ local function readFull(req)
     end
 
     if ((isMultipart(req))or(isLuaPackMesg(req))) then
-        -- multipart (file upload) HTTP requests and LuaPack requests are forced to be streaming to conserve memory
+        --multipart (file upload) HTTP requests and LuaPack requests are forced to be streaming to conserve memory
         return
     end
 

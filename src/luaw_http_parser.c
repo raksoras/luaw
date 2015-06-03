@@ -256,86 +256,92 @@ static const http_parser_settings parser_settings = {
 };
 
 /* Lua call spec:
-* All failures:
-*       false, error message = parser:parseHttp(str, offset)
-*
-* Successes:
-*
-*   http_parser_on_headers_complete:
-*       http_cb_type, new offset, http_should_keep_alive, major_version, minor_version, http method, http status code = parseHttp(conn)
-*
-*   http_parser_on_message_complete:
-*       http_cb_type, new offset, http_should_keep_alive = parser:parseHttp(str, offset)
-*
-*   All other callbacks:
-*       http_cb_type, new offset, parsed value = parser:parseHttp(conn, str, offset)
-*
+* Success: true, remaining read len, str = parser:parserHttp(conn)
+* failure: false, remaining read len, error message = parser:parseHttp(conn)
 */
 static int parse_http(lua_State *L) {
-    lua_settop(L, 3);
-
+    lua_settop(L, 2);
 	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
-	http_parser* parser = &lhttp_parser->parser;
-
-    size_t len = 0;
-    const char* buff = lua_tolstring(L, 2, &len);
-
-    int offset = lua_tointeger(L, 3);
-    if (offset > len) {
+	http_parser* parser = &lhttp_parser->parser;    
+    LUA_GET_CONN_OR_ERROR(L, 2, conn);
+    
+    int len = remaining_read_len(conn);
+    if (len == 0) {
         lua_pushboolean(L, 0);
-        lua_pushfstring(L, "Wrong offset into HTTP string: len=%d, offset=%d, content=%s\n", len, offset, buff);
+        lua_pushfstring(L, "Empty HTTP buffer");
         return 2;
     }
 
-	/* every http_parser_execute() does not necessarily cause callback to be invoked, we need to know if it
-	   did call the callback */
+	/* every http_parser_execute() does not necessarily cause callback to be invoked, we need to know if it did call the callback */
 	lhttp_parser->http_cb = http_cb_none;
-	const int nparsed = http_parser_execute(parser, &parser_settings, (buff+offset), (len-offset));
-	offset += nparsed;
-	const int remaining = len - offset;
+    char* data = remaining_read_start(conn);
+    
+	const int nparsed = http_parser_execute(parser, &parser_settings, data, len);
+    
+    conn->read_buffer.offset += nparsed;
+	const int remaining = remaining_read_len(conn);
 
     if ((remaining > 0)&&(parser->http_errno != HPE_PAUSED)) {
         lua_pushboolean(L, 0);
-        lua_pushfstring(L, "Error parsing HTTP fragment: errorCode=%d, total=%d, parsed=%d, content=%s\n", parser->http_errno, len, nparsed, buff);
+        lua_pushfstring(L, "Error parsing HTTP fragment: errorCode=%d, content=%s\n", parser->http_errno, data);
         return 2;
-    }
-
-    lua_pushinteger(L, lhttp_parser->http_cb);
-    lua_pushinteger(L, offset);
-    int nresults = 3;
-
-    switch(lhttp_parser->http_cb) {
-        case http_cb_on_headers_complete:
-            lua_pushboolean(L, http_should_keep_alive(parser));
-	        lua_pushinteger(L, parser->http_major);
-        	lua_pushinteger(L, parser->http_minor);
-            if (parser->type == HTTP_REQUEST) {
-                lua_pushstring(L, http_methods[parser->method]);
-            } else {
-                lua_pushnil(L);
-            }
-            if (parser->type == HTTP_RESPONSE) {
-                lua_pushinteger(L, parser->status_code);
-            } else {
-                lua_pushnil(L);
-            }
-            nresults = 7;
-            break;
-
-        case http_cb_none:
-        case http_cb_on_mesg_complete:
-            lua_pushboolean(L, http_should_keep_alive(parser));
-            break;
-
-        default:
-            lua_pushlstring(L, lhttp_parser->start, lhttp_parser->len);
     }
 
     /* un-pause parser */
     http_parser_pause(parser, 0);
-    return nresults;
+    lua_pushinteger(L, lhttp_parser->http_cb);
+    lua_pushinteger(L, remaining);
+    return 2;
 }
 
+static int get_parsed_chunk(lua_State *L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+    lua_pushlstring(L, lhttp_parser->start, lhttp_parser->len);
+    return 1;
+}
+
+static int should_keep_alive(lua_State *L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+    lua_pushboolean(L, http_should_keep_alive(parser));
+    return 1;
+}
+
+static int get_http_major_version(lua_State *L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+    lua_pushinteger(L, parser->http_major);
+    return 1;
+}
+
+static int get_http_minor_version(lua_State *L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+    lua_pushinteger(L, parser->http_major);
+    return 1;
+}
+
+static int get_req_method(lua_State *L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+    if (parser->type == HTTP_REQUEST) {
+        lua_pushstring(L, http_methods[parser->method]);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+static int get_resp_status(lua_State *L) {
+	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+	http_parser* parser = &lhttp_parser->parser;
+    if (parser->type == HTTP_RESPONSE) {
+        lua_pushinteger(L, parser->status_code);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
 
 const char* url_field_names[] = { "schema", "host", "port", "path", "queryString", "fragment", "userInfo" };
 
@@ -390,7 +396,13 @@ static const struct luaL_Reg luaw_http_lib[] = {
 static const struct luaL_Reg http_parser_methods[] = {
 	{"parseHttp", parse_http},
 	{"initHttpParser", luaw_init_http_parser},
-	{NULL, NULL}  /* sentinel */
+    {"getParsedChunk", get_parsed_chunk},
+    {"shouldKeepAlive", should_keep_alive},
+    {"getHttpMajorVersion", get_http_major_version},
+    {"getHttpMinorVersion", get_http_minor_version},
+    {"getReqMethod", get_req_method},
+    {"getRespStatus", get_resp_status},
+    {NULL, NULL}  /* sentinel */
 };
 
 void luaw_init_http_lib (lua_State *L) {

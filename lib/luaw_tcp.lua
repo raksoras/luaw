@@ -41,13 +41,15 @@ connMT.startReading = function(self)
     assert(status, mesg)
 end
 
-connMT.read = function(self, readTimeout)
-    local status, str = readInternal(self, scheduler.tid(), readTimeout or DEFAULT_READ_TIMEOUT)
-    if ((status)and(not str)) then
+connMT.read = function(self, readTimeout, minReadLen)
+    readTimeout = readTimeout or DEFAULT_READ_TIMEOUT
+    minReadLen = minReadLen or 1
+    local status, readLen = readInternal(self, scheduler.tid(), readTimeout, minReadLen)
+    while ((status)and(readLen < minReadLen)) do
         -- nothing in buffer, wait for libuv on_read callback
-        status, str = coroutine.yield(TS_BLOCKED_EVENT)
+        status, readLen = coroutine.yield(TS_BLOCKED_EVENT)
     end
-    return status, str
+    return status, readLen
 end
 
 connMT.write = function(self, str, writeTimeout)
