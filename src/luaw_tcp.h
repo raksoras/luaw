@@ -25,31 +25,39 @@
 #define LUAW_TCP_H
 
 #define LUA_CONNECTION_META_TABLE "_luaw_connection_MT_"
+#define LUA_BUFFER_META_TABLE "_luaw_buff_MT_"
 #define CONN_BUFFER_SIZE 4096
+
+typedef struct buff_s buff_t;
+
+struct buff_s {
+    int offset;                     /* position upto which content is consumed from buffer */
+    int end;                        /* end of content available in buffer */
+    char buff[CONN_BUFFER_SIZE];    /* buffer to read into */
+};
 
 typedef struct connection_s connection_t;
 
 /* client connection's state: socket connection, coroutines servicing the connection
  and read/write buffers for the connection */
 struct connection_s {
-    uv_tcp_t handle;                        /* connected socket */
+    uv_tcp_t handle;                /* connected socket */
 
     /* read section */
-    int lua_reader_tid;                     /* ID of the reading coroutine */
-	size_t read_len;			            /* read length */
-    uv_timer_t read_timer;                  /* for read timeout */
+    int lua_reader_tid;             /* ID of the reading coroutine */
+    uv_timer_t read_timer;          /* for read timeout */
 
     /* write section */
-    int lua_writer_tid;                     /* ID of the writing coroutine */
-    uv_timer_t write_timer;                 /* for write/connect timeout */
-    uv_write_t write_req;                   /* write request */
+    int lua_writer_tid;             /* ID of the writing coroutine */
+    uv_timer_t write_timer;         /* for write/connect timeout */
+    uv_write_t write_req;           /* write request */
 
     /* memory management */
-    int ref_count;                          /* reference count */
-    connection_t** lua_ref;                 /* back reference to Lua's full userdata pointing to this conn */
+    int ref_count;                  /* reference count */
+    connection_t** lua_ref;         /* back reference to Lua's full userdata pointing to this conn */
 
     /* read buffer */
-    char read_buffer[CONN_BUFFER_SIZE];     /* buffer to read into */
+    buff_t read_buffer;             /* buffer to read into */
 };
 
 #define MAX_CONNECTION_BUFF_SIZE 65536  //16^4
@@ -78,6 +86,8 @@ struct connection_s {
 /* TCP lib methods to be exported */
 extern connection_t* new_connection(lua_State* L);
 extern void close_connection(connection_t* conn, const int status);
+extern int remaining_read_len(connection_t* conn);
+extern char* remaining_read_start(connection_t* conn);
 extern void luaw_init_tcp_lib (lua_State *L);
 
 #endif
