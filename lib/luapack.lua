@@ -256,8 +256,8 @@ local function newLPackReqReader(req)
     assert(req, "Request cannot be null")
     local lpackReader = newLPackReader()
     lpackReader.readFn = function()
-        if ((not req.EOF)and(not req.luaw_mesg_done)) then
-            req:readAndParse()
+        if ((not req.EOF)and(not req.END)) then
+            req:read()
             local str =  req:consumeBodyChunkParsed()
             if (not str) then
                 debugDump(req)

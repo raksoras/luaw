@@ -10,7 +10,7 @@ LIBS= ../$(UVLIB) -lpthread ../$(LUALIB) -lm $(SYSLIBS) $(MYLIBS)
 # == END OF USER SETTINGS -- NO NEED TO CHANGE ANYTHING BELOW THIS LINE =======
 
 # Build artifacts
-LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
+LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_buffer.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
 LUAW_BIN= luaw_server
 LUAW_CONF= server.cfg
 LUAW_SCRIPTS= luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua \
@@ -86,6 +86,7 @@ http_parser.o: http_parser.c http_parser.h
 lua_lpack.o: lua_lpack.c lua_lpack.h luaw_common.h
 luaw_logging.o: luaw_logging.c luaw_logging.h luaw_common.h
 luaw_common.o: luaw_common.c luaw_common.h luaw_tcp.h luaw_http_parser.h luaw_timer.h lua_lpack.h
+luaw_buffer.o: luaw_buffer.c luaw_buffer.h
 luaw_http_parser.o: luaw_http_parser.c luaw_http_parser.h luaw_common.h luaw_tcp.h lfs.h
 luaw_server.o: luaw_server.c luaw_common.h luaw_tcp.h luaw_logging.h
 luaw_tcp.o: luaw_tcp.c luaw_tcp.h luaw_common.h http_parser.h luaw_http_parser.h luaw_tcp.h

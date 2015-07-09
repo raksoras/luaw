@@ -32,6 +32,7 @@
 #include "uv.h"
 #include "luaw_common.h"
 #include "luaw_logging.h"
+#include "luaw_buffer.h"
 #include "luaw_tcp.h"
 #include "luaw_http_parser.h"
 #include "luaw_timer.h"

@@ -289,18 +289,18 @@ local function serviceHTTP(conn)
         local req = luaw_http_lib.newServerHttpRequest(conn)
 
         -- read and parse full request
-        local status, errmesg = pcall(req.readFull, req)
+        local status, errmesg = pcall(req.read, req)
         if ((not status)or(req.EOF == true)) then
             conn:close()
             if (status) then
                 return "read time out"
             end
-            print("Error: ", errmesg, debug.traceback())
+            print(status, "Error: ", errmesg, debug.traceback('', 3))
             return "connection reset by peer"
         end
 
         local resp = luaw_http_lib.newServerHttpResponse(conn)
-        local status, errMesg = pcall(dispatchAction, req, resp)
+        status, errMesg = pcall(dispatchAction, req, resp)
 
         if (not status) then
             -- send HTTP error response

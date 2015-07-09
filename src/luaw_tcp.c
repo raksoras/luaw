@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
+//#include <assert.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -36,10 +36,11 @@
 
 #include "uv.h"
 #include "luaw_common.h"
-#include "http_parser.h"
-#include "luaw_http_parser.h"
+#include "luaw_buffer.h"
+//#include "http_parser.h"
+//#include "luaw_http_parser.h"
 #include "luaw_tcp.h"
-#include "lfs.h"
+//#include "lfs.h"
 
 
 
@@ -72,8 +73,6 @@ connection_t* new_connection(lua_State* L) {
     conn->read_timer.data = conn;
     INCR_REF_COUNT(conn)
     conn->lua_reader_tid = 0;
-    conn->read_buffer.end = 0;
-    conn->read_buffer.offset = 0;
 
     uv_timer_init(uv_default_loop(), &conn->write_timer);
     conn->write_timer.data = conn;
@@ -85,72 +84,6 @@ connection_t* new_connection(lua_State* L) {
 
 LUA_LIB_METHOD static int new_connection_lua(lua_State* L) {
     new_connection(L);
-    return 1;
-}
-
-void reset_read_buffer(connection_t* conn) {
-    conn->read_buffer.offset = 0;
-    conn->read_buffer.end = 0;
-}
-
-int remaining_read_len(connection_t* conn) {
-    int read_len_remain = conn->read_buffer.end - conn->read_buffer.offset;
-    if (read_len_remain > 0) {
-        return read_len_remain;
-    }
-    return 0;
-}
-
-int remaining_read_capacity(connection_t* conn) {
-    int read_capacity_remain = CONN_BUFFER_SIZE - conn->read_buffer.end;
-    if (read_capacity_remain > 0) {
-        return read_capacity_remain;
-    }
-    return 0;
-}
-
-char* remaining_read_start(connection_t* conn) {
-    if (conn->read_buffer.offset < CONN_BUFFER_SIZE)  {
-        return conn->read_buffer.buff + conn->read_buffer.offset;
-    }
-    return NULL;
-}
-
-int left_align_remaining_read(connection_t* conn) {
-    int read_len_remain = remaining_read_len(conn);
-    if (read_len_remain == 0) {
-        reset_read_buffer(conn);
-        return CONN_BUFFER_SIZE;
-    }
-    
-    /* positive read length remaining */
-    int offset = conn->read_buffer.offset;
-    if ((offset > 0)&&(offset < CONN_BUFFER_SIZE)) {
-        memmove(conn->read_buffer.buff, (conn->read_buffer.buff + offset), read_len_remain);
-        conn->read_buffer.offset = 0;
-        conn->read_buffer.end = read_len_remain;
-    }
-    return remaining_read_capacity(conn);
-}
-
-LUA_OBJ_METHOD static int lua_remaining_read_len(lua_State *l_thread) {
-    LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-    lua_pushinteger(l_thread, remaining_read_len(conn));
-    return 1;
-}
-
-LUA_OBJ_METHOD static int lua_read_content(lua_State *l_thread) {
-    LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-    
-    int len = remaining_read_len(conn);
-    if (len > 0) {
-        char* start = remaining_read_start(conn);
-        lua_pushlstring(l_thread, start, len);
-    } else {
-        lua_pushnil(l_thread);
-    }
-    
-    reset_read_buffer(conn);
     return 1;
 }
 
@@ -181,7 +114,6 @@ void close_connection(connection_t* conn, const int status) {
     close_if_active((uv_handle_t*)&conn->write_timer, (uv_close_cb)free_timer);
 
     close_if_active((uv_handle_t*)&conn->handle, (uv_close_cb)free_tcp_handle);
-
 
     /* unblock reader thread */
     if (conn->lua_reader_tid) {
@@ -260,33 +192,23 @@ LUA_OBJ_METHOD static int connection_gc(lua_State *L) {
     return 0;
 }
 
-/* reuse the buffer attached with this conn to minimize memory allocation. Each on_read()
-*  resets the buffer to empty after sending all the bytes read to the coroutine servicing this
-*  conn. If we get called before on_read() has had chance to empty the buffer, we return
-*  0 which means on_read() will be called with nread=UV_ENOBUFS next which we must handle.
-*/
 LIBUV_CALLBACK static void on_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
     buf->base = NULL;
     buf->len = 0;
-
     connection_t* conn = GET_CONN_OR_RETURN(handle);
-    size_t free_space = remaining_read_capacity(conn);
+    
+    size_t free_space = buffer_remaining_capacity(conn->read_buffer);
     if (free_space > 0) {
-        buf->base = remaining_read_start(conn);
+        buf->base = buffer_fill_start_pos(conn->read_buffer);
         buf->len = free_space;
     }
 }
 
-/* Returns
-* 1. tid
-* 2. status: true = succesfull read, false = error
-*/
 /*
 * Returns,
 * Success: status=true, length of content available to read (could be zero)
 * Failure: status=false, error message
 */
-
 LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     connection_t* conn = GET_CONN_OR_RETURN(stream);
     stop_timer(&conn->read_timer); //clear read timeout if any
@@ -301,22 +223,23 @@ LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t
         close_connection(conn, nread);
     }
     
-    if (nread > 0) {
+    buff_t* read_buffer = conn->read_buffer;
+    if ((nread > 0)&&(read_buffer != NULL)&&(conn->lua_reader_tid != 0)) {
         /* new additional data available for read */
-        int read_len = conn->read_buffer.end + nread;
-        if (read_len > CONN_BUFFER_SIZE) {
+        int read_len = read_buffer->end + nread;
+        if (read_len > read_buffer->cap) {
             /* should never happen, on_alloc returns read buffer within limit */
-            close_connection(conn, nread);
+            close_connection(conn, UV_EAI_OVERFLOW);
         }
-        
-        conn->read_buffer.end = read_len;
-        int read_len_remain = remaining_read_len(conn);
+        read_buffer->end = read_len;
 
+        /* wake up read coroutine */
         lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
         lua_pushinteger(l_global, conn->lua_reader_tid);
         lua_pushboolean(l_global, 1);
-        lua_pushinteger(l_global, read_len_remain);
+        lua_pushinteger(l_global, read_len);
         conn->lua_reader_tid = 0;
+        conn->read_buffer = NULL;
         resume_lua_thread(l_global, 3, 2, 0);
     }
 }
@@ -341,47 +264,32 @@ LUA_OBJ_METHOD static int start_reading(lua_State *l_thread) {
     return 1;
 }
 
-/*
-* Returns,
-* Success case: status=true, length of content available to read (could be zero)
-* Error case:   status=false, error message
-*/
 LUA_OBJ_METHOD static int read_check(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-
     if (!uv_is_active((uv_handle_t*)&conn->handle)) {
         close_connection(conn, UV_EAI_BADFLAGS);
-       return error_to_lua(l_thread, "read() called on conn that is not registered to receive read events");
+        return error_to_lua(l_thread, "read() called on conn that is not registered to receive read events");
     }
 
-    int lua_reader_tid = lua_tointeger(l_thread, 2);
-    int readTimeout = lua_tointeger(l_thread, 3);
-    int min_read_ask = lua_tointeger(l_thread, 4);
-    int read_len_remain = remaining_read_len(conn);
-
-    if (read_len_remain < min_read_ask) {
-        if (lua_reader_tid == 0) {
-            return error_to_lua(l_thread, "Invalid lua_read_tid passed in");
-        }
-
-        /* ensure we have enough buffer capacity to satisfy min_read_ask */
-        int read_capacity_remain = remaining_read_capacity(conn);
-        if ((read_len_remain + read_capacity_remain) < min_read_ask) {
-            /* try to make room by discarding buffer contents already read */
-            read_capacity_remain = left_align_remaining_read(conn);
-            if ((read_len_remain + read_capacity_remain) < min_read_ask) {
-                close_connection(conn, UV_EAI_BADFLAGS);
-                return error_to_lua(l_thread, "read buffer cannot accomodate minimun read size requested (%d)", min_read_ask);
-            }
-        }
+    LUA_GET_BUFF_OR_ERROR(l_thread, 2, read_buffer);    
+    if (read_buffer->end >= read_buffer->cap) {
+        close_connection(conn, UV_EAI_OVERFLOW);
+        return error_to_lua(l_thread, "buffer passed to read() is already full");
+    }
     
-        /* less than minimum requesed content in buffer, record reader tid and block (yield) in lua */
-        conn->lua_reader_tid = lua_reader_tid;
-        start_timer(&conn->read_timer, readTimeout);
+    int lua_reader_tid = lua_tointeger(l_thread, 3);
+    if (lua_reader_tid == 0) {
+        close_connection(conn, UV_EINVAL);
+        return error_to_lua(l_thread, "Invalid coroutine id");
     }
+
+    int readTimeout = lua_tointeger(l_thread, 4);
+    conn->read_buffer = read_buffer;
+    conn->lua_reader_tid = lua_reader_tid;
+    start_timer(&conn->read_timer, readTimeout);
     
     lua_pushboolean(l_thread, 1);
-    lua_pushinteger(l_thread, read_len_remain);
+    lua_pushinteger(l_thread, read_buffer->end);
     return 2;
 }
 
@@ -583,24 +491,35 @@ static const struct luaL_Reg luaw_connection_methods[] = {
     {"startReading", start_reading},    
     {"read", read_check},
     {"write", write_buffer},
-    {"readLength", lua_remaining_read_len},
-    {"readContent", lua_read_content},
     {"close", close_connection_lua},
     {"__gc", connection_gc},
     {NULL, NULL}  /* sentinel */
 };
 
+static const struct luaL_Reg luaw_buffer_methods[] = {
+    {"free", free_buffer},    
+    {"capacity", buffer_capacity},
+    {"length", buffer_length},
+    {"remainingLength", buffer_remaining_content_len},
+    {"tostring", buffer_tostring},
+    {"clear", buffer_clear},
+    {"reset", buffer_reset},
+    {"__gc", free_buffer},
+    {NULL, NULL}  /* sentinel */
+};
+
 static const struct luaL_Reg luaw_tcp_lib[] = {
-	{"newConnection", new_connection_lua},
-	{"connect", client_connect},
-	{"resolveDNS", dns_resolve},
+    {"newConnection", new_connection_lua},
+    {"newBuffer", new_buffer},
+    {"connect", client_connect},
+    {"resolveDNS", dns_resolve},
     {NULL, NULL}  /* sentinel */
 };
 
 
 void luaw_init_tcp_lib (lua_State *L) {
-	make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
+    make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
+    make_metatable(L, LUA_BUFFER_META_TABLE, luaw_buffer_methods);
     luaL_newlib(L, luaw_tcp_lib);
     lua_setglobal(L, "luaw_tcp_lib");
 }
-
