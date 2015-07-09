@@ -29,6 +29,7 @@
 
 #include "uv.h"
 #include "luaw_common.h"
+#include "luaw_buffer.h"
 #include "luaw_http_parser.h"
 #include "luaw_tcp.h"
 
@@ -41,140 +42,146 @@ typedef enum {
 }
 parse_http_lua_stack_index;
 
-static int decode_hex_str(const char* str, int len) {
-	char *read_ptr = (char *)str;
-	char *write_ptr = (char *)str;
-	int hex_ch;
-	char ch;
+//static int decode_hex_str(const char* str, int len) {
+//	char *read_ptr = (char *)str;
+//	char *write_ptr = (char *)str;
+//	int hex_ch;
+//	char ch;
 
-	while (len) {
-		ch = *read_ptr;
-		if ((ch == '%')&&(len > 2)) {
-			sscanf((read_ptr+1),"%2x", &hex_ch);
-			ch = (char)hex_ch;
-			read_ptr += 3; len -= 3;
-		}
-		else {
-			read_ptr++;	len--;
-		}
+//	while (len) {
+//		ch = *read_ptr;
+//		if ((ch == '%')&&(len > 2)) {
+//			sscanf((read_ptr+1),"%2x", &hex_ch);
+//			ch = (char)hex_ch;
+//			read_ptr += 3; len -= 3;
+//		}
+//		else {
+//			read_ptr++;	len--;
+//		}
 
-		*write_ptr = ch;
-		write_ptr++;
-	}
-	return ((const unsigned char*)write_ptr - (const unsigned char*)str);
-}
+//		*write_ptr = ch;
+//		write_ptr++;
+//	}
+//	return ((const unsigned char*)write_ptr - (const unsigned char*)str);
+//}
 
-static int handle_name_value_pair(lua_State* L, const char* name, int name_len, bool hex_name, const char* value, int value_len, bool hex_value) {
-	if ((name != NULL)&&(name_len > 0)&&(value != NULL)&&(value_len > 0)) {
-		if (hex_name) {
-			name_len = decode_hex_str(name, name_len);
-		}
-		if (hex_value) {
-			value_len = decode_hex_str(value, value_len);
-		}
+//static int handle_name_value_pair(lua_State* L, const char* name, int name_len, bool hex_name, const char* value, int value_len, bool hex_value) {
+//	if ((name != NULL)&&(name_len > 0)&&(value != NULL)&&(value_len > 0)) {
+//		if (hex_name) {
+//			name_len = decode_hex_str(name, name_len);
+//		}
+//		if (hex_value) {
+//			value_len = decode_hex_str(value, value_len);
+//		}
 
-		lua_getfield(L, 1, "storeHttpParam");
-		if (lua_isfunction(L, -1) != 1) {
-			raise_lua_error(L, "Missing lua function storeHttpParam()");
-        }
-		lua_pushvalue(L, 3);
-		lua_pushlstring(L, name, name_len);
-		lua_pushlstring(L, value, value_len) ;
-		lua_call(L, 3, 0);
-	}
-	else if((name_len == 0)&&(value_len > 0)) {
-	    error_to_lua(L, "400 Bad URL encoding: empty parameter name, non empty parameter value: %s ", value);
-	    return false;
-	}
-	return true; //param name without value is ok, e.g. &foo=
-}
+//		lua_getfield(L, 1, "storeHttpParam");
+//		if (lua_isfunction(L, -1) != 1) {
+//			raise_lua_error(L, "Missing lua function storeHttpParam()");
+//        }
+//		lua_pushvalue(L, 3);
+//		lua_pushlstring(L, name, name_len);
+//		lua_pushlstring(L, value, value_len) ;
+//		lua_call(L, 3, 0);
+//	}
+//	else if((name_len == 0)&&(value_len > 0)) {
+//	    error_to_lua(L, "400 Bad URL encoding: empty parameter name, non empty parameter value: %s ", value);
+//	    return false;
+//	}
+//	return true; //param name without value is ok, e.g. &foo=
+//}
 
-/* Lua call spec:
- success: params table, nil = http_lib:url_decode(url encoded string, params)
- success: status(false), error message = http_lib:url_decode(url encoded string, params)
-*/
-LUA_LIB_METHOD static int luaw_url_decode(lua_State *L) {
-	if (!lua_istable(L, 1)) {
-		return raise_lua_error(L, "Luaw HTTP lib table is missing");
-	}
-	size_t length = 0;
-	const char* data = lua_tolstring(L, 2, &length);
-	char *read_ptr = (char *)data;
-	char *name = NULL;
-	char *value = NULL;
-	bool hex_name = false, hex_value = false;
-	int name_len = 0, value_len = 0;
-	decoder_state ds = starting_name;
+//* Lua call spec:
+// success: params table, nil = http_lib:url_decode(url encoded string, params)
+// success: status(false), error message = http_lib:url_decode(url encoded string, params)
+//*/
+//LUA_LIB_METHOD static int luaw_url_decode(lua_State *L) {
+//	if (!lua_istable(L, 1)) {
+//		return raise_lua_error(L, "Luaw HTTP lib table is missing");
+//	}
+//	size_t length = 0;
+//	const char* data = lua_tolstring(L, 2, &length);
+//	char *read_ptr = (char *)data;
+//	char *name = NULL;
+//	char *value = NULL;
+//	bool hex_name = false, hex_value = false;
+//	int name_len = 0, value_len = 0;
+//	decoder_state ds = starting_name;
 
-	while (length--) {
-		char ch = *read_ptr;
+//	while (length--) {
+//		char ch = *read_ptr;
 
-		switch(ds) {
-			case starting_name:
-                if (!handle_name_value_pair(L, name, name_len, hex_name, value, value_len, hex_value)) return 2; //err_code, err_mesg
-				name_len = 0;
-				hex_name = false;
-				value_len = 0;
-				hex_value = false;
+//		switch(ds) {
+//			case starting_name:
+//                if (!handle_name_value_pair(L, name, name_len, hex_name, value, value_len, hex_value)) return 2; //err_code, err_mesg
+//				name_len = 0;
+//				hex_name = false;
+//				value_len = 0;
+//				hex_value = false;
 
-				switch(ch) {
-					case '&':
-					case '=':
-                	    return error_to_lua(L, "400 Bad URL encoding: Error while expecting start of param name at: %s\n", read_ptr);
-					case '%':
-						hex_name = true;
-				}
-				ds = in_name;
-				name = read_ptr;
-				name_len = 1;
-				break;
+//				switch(ch) {
+//					case '&':
+//					case '=':
+//                	    return error_to_lua(L, "400 Bad URL encoding: Error while expecting start of param name at: %s\n", read_ptr);
+//					case '%':
+//						hex_name = true;
+//				}
+//				ds = in_name;
+//				name = read_ptr;
+//				name_len = 1;
+//				break;
 
-			case in_name:
-				switch(ch) {
-					case '&':
-			    	    return error_to_lua(L, "400 Bad URL encoding: Error while parsing param name at: %s\n", read_ptr);
-					case '=':
-						ds = starting_value;
-						break;
-					case '%':
-						hex_name = true;
-					default:
-						name_len++;
-				}
-				break;
+//			case in_name:
+//				switch(ch) {
+//					case '&':
+//			    	    return error_to_lua(L, "400 Bad URL encoding: Error while parsing param name at: %s\n", read_ptr);
+//					case '=':
+//						ds = starting_value;
+//						break;
+//					case '%':
+//						hex_name = true;
+//					default:
+//						name_len++;
+//				}
+//				break;
 
-			case starting_value:
-				switch(ch) {
-					case '&':
-					case '=':
-			    	    return error_to_lua(L, "400 Bad URL encoding: Error while expecting start of param value at: %s\n", read_ptr);
-					case '%':
-						hex_value = true;
-				}
-				ds = in_value;
-				value = read_ptr;
-				value_len = 1;
-				break;
+//			case starting_value:
+//				switch(ch) {
+//					case '&':
+//					case '=':
+//			    	    return error_to_lua(L, "400 Bad URL encoding: Error while expecting start of param value at: %s\n", read_ptr);
+//					case '%':
+//						hex_value = true;
+//				}
+//				ds = in_value;
+//				value = read_ptr;
+//				value_len = 1;
+//				break;
 
-			case in_value:
-				switch(ch) {
-					case '&':
-						ds = starting_name;
-						break;
-					case '=':
-			    	    return error_to_lua(L, "400 Bad URL encoding: Error while parsing param value at: %s\n", read_ptr);
-					case '%':
-						hex_value = true;
-					default:
-						value_len++;
-				}
-				break;
+//			case in_value:
+//				switch(ch) {
+//					case '&':
+//						ds = starting_name;
+//						break;
+//					case '=':
+//			    	    return error_to_lua(L, "400 Bad URL encoding: Error while parsing param value at: %s\n", read_ptr);
+//					case '%':
+//						hex_value = true;
+//					default:
+//						value_len++;
+//				}
+//				break;
 
-		}
-		if (ch == '+') *read_ptr =' ';
-		read_ptr++;
-	}
-    return handle_name_value_pair(L, name, name_len, hex_name, value, value_len, hex_value) ? 1 : 2;
+//		}
+//		if (ch == '+') *read_ptr =' ';
+//		read_ptr++;
+//	}
+//    return handle_name_value_pair(L, name, name_len, hex_name, value, value_len, hex_value) ? 1 : 2;
+//}
+
+static void init_lhttp_parser(luaw_http_parser_t* lhttp_parser) {
+    lhttp_parser->http_cb = http_cb_none;
+    lhttp_parser->start = NULL;
+    lhttp_parser->len = 0;
 }
 
 static int new_lhttp_parser(lua_State *L, enum http_parser_type parser_type) {
@@ -184,6 +191,7 @@ static int new_lhttp_parser(lua_State *L, enum http_parser_type parser_type) {
 	}
 	luaL_setmetatable(L, LUA_HTTP_PARSER_META_TABLE);
 	http_parser_init(&lhttp_parser->parser, parser_type);
+    init_lhttp_parser(lhttp_parser);
 	lhttp_parser->parser.data = lhttp_parser;
 	return 1;
 }
@@ -197,9 +205,10 @@ LUA_LIB_METHOD static int luaw_new_http_response_parser(lua_State* L) {
 }
 
 LUA_LIB_METHOD static int luaw_init_http_parser(lua_State* L) {
-	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
-	http_parser* parser = &lhttp_parser->parser;
-	http_parser_init(parser, parser->type);
+    luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+    http_parser* parser = &lhttp_parser->parser;
+    http_parser_init(parser, parser->type);
+    init_lhttp_parser(lhttp_parser);
     return 0;
 }
 
@@ -256,30 +265,32 @@ static const http_parser_settings parser_settings = {
 };
 
 /* Lua call spec:
-* Success: true, remaining read len, str = parser:parserHttp(conn)
-* failure: false, remaining read len, error message = parser:parseHttp(conn)
+* Success: true, remaining read len, str = parser:parserHttp(buff)
+* failure: false, remaining read len, error message = parser:parseHttp(buff)
 */
 static int parse_http(lua_State *L) {
-    lua_settop(L, 2);
-	luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
-	http_parser* parser = &lhttp_parser->parser;    
-    LUA_GET_CONN_OR_ERROR(L, 2, conn);
+    lua_settop(L, 2);	
     
-    int len = remaining_read_len(conn);
-    if (len == 0) {
+    luaw_http_parser_t* lhttp_parser = luaL_checkudata(L, 1, LUA_HTTP_PARSER_META_TABLE);
+    http_parser* parser = &lhttp_parser->parser;    
+    
+    LUA_GET_BUFF_OR_ERROR(L, 2, buff);
+    
+    const int len = remaining_content_len(buff);
+    if (len <= 0) {
         lua_pushboolean(L, 0);
         lua_pushfstring(L, "Empty HTTP buffer");
         return 2;
     }
-
+    
 	/* every http_parser_execute() does not necessarily cause callback to be invoked, we need to know if it did call the callback */
 	lhttp_parser->http_cb = http_cb_none;
-    char* data = remaining_read_start(conn);
+    const char* data = buffer_read_start_pos(buff);
     
-	const int nparsed = http_parser_execute(parser, &parser_settings, data, len);
+	int nparsed = http_parser_execute(parser, &parser_settings, data, len);
     
-    conn->read_buffer.offset += nparsed;
-	const int remaining = remaining_read_len(conn);
+    buff->pos += nparsed;
+	const int remaining = remaining_content_len(buff);
 
     if ((remaining > 0)&&(parser->http_errno != HPE_PAUSED)) {
         lua_pushboolean(L, 0);
@@ -290,8 +301,7 @@ static int parse_http(lua_State *L) {
     /* un-pause parser */
     http_parser_pause(parser, 0);
     lua_pushinteger(L, lhttp_parser->http_cb);
-    lua_pushinteger(L, remaining);
-    return 2;
+    return 1;
 }
 
 static int get_parsed_chunk(lua_State *L) {
@@ -386,7 +396,7 @@ LUA_LIB_METHOD static int luaw_parse_url(lua_State *L) {
 }
 
 static const struct luaL_Reg luaw_http_lib[] = {
-	{"urlDecode", luaw_url_decode},
+//	{"urlDecode", luaw_url_decode},
 	{"newHttpRequestParser", luaw_new_http_request_parser},
 	{"newHttpResponseParser", luaw_new_http_response_parser},
 	{"parseURL", luaw_parse_url},

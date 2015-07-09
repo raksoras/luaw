@@ -17,7 +17,7 @@ http_lib.request_handler =  function(conn)
         local resp = http_lib.newServerHttpResponse(conn)
 
         -- read and parse full request
-        req:readFull()
+        req:read()
         if (req.EOF) then
             conn:close()
             return "connection reset by peer"
@@ -36,8 +36,8 @@ http_lib.request_handler =  function(conn)
 
            local status, backendResp = pcall(backendReq.execute, backendReq)
            if (status) then
-               resp:setStatus(backendResp:getStatus())
-               resp:appendBody(backendResp:getBody())
+               resp:setStatus(backendResp.status)
+               resp:appendBody(backendResp.body)
                local beHeaders = backendResp.headers
                for k,v in pairs(beHeaders) do
                    if ((k ~= 'Transfer-Encoding')and(k ~= 'Content-Length')) then

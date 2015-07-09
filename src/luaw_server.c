@@ -37,6 +37,7 @@
 #include "uv.h"
 #include "luaw_common.h"
 #include "luaw_logging.h"
+#include "luaw_buffer.h"
 #include "luaw_tcp.h"
 #include "lfs.h"
 
@@ -145,9 +146,6 @@ void init_luaw_server(lua_State* L) {
 
         lua_pop(L, 1);  //pop luaw_server_config object
     }
-
-    lua_pushnumber(L, CONN_BUFFER_SIZE);
-    lua_setglobal(L, "CONN_BUFFER_SIZE");
 
     event_loop = uv_default_loop();
 }
