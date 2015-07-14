@@ -86,40 +86,60 @@ setmetatable(http_status_codes, {
     end
 })
 
--- write buffer implementation
+-- write buffer chain implementation
 
-local function clearArrayPart(t)
-    local len = #t
-    for i=1,len do
-        t[i] = nil
+local function clear(buffers)
+    local count = #buffers
+    for i=1,count do
+        local buff = buffers[i]
+        buff:clear()
     end
 end
 
-local function clear(wbuffer)
-    clearArrayPart(wbuffer)
-    wbuffer.len = 0
+local function free(buffers)
+    local count = #buffers
+    for i=1,count do
+        local buff = buffers[i]
+        buff:free()
+        buffers[i] = nil
+    end
 end
 
-local function concat(wbuffer)
-    return table.concat(wbuffer)
+local function append(buffers, str)
+    local buff 
+    local count = #buffers
+    if (count > 0) then
+        buff = buffers[count]
+    else
+        buff = luaw_tcp_lib.newBuffer(math.max(CONN_BUFFER_SIZE, #str+1))
+        count = 1
+        buffers[count] = buff
+    end
+
+    local added = buff:append(str)    
+    if (not added) then
+        buff = luaw_tcp_lib.newBuffer(math.max(CONN_BUFFER_SIZE, #str+1))
+        buffers[count+1] = buff
+        buff:append(str)
+    end
 end
 
-local function append(wbuffer, str)
-    local len = wbuffer.len
-    if (str) then
-        table.insert(wbuffer, str)
-        len = len + #str
-        wbuffer.len = len
+local function length(buffers)
+    local count = #buffers
+    local len = 0
+    for i=1,count do
+        local buff = buffers[i]
+        len = len + buff:length()
     end
     return len
 end
 
-local function newWriteBuffer()
+local function newBufferChain()
     return {
-        len = 0,
         clear = clear,
-        concat = concat,
-        append = append
+        free = free,
+        append = append,
+        length = length
     }
 end
 
@@ -275,12 +295,10 @@ local function parseHttpRequest(req, streamParse)
     local conn = req.luaw_conn
     local parser = req.luaw_parser    
     local headers = req.headers
-    local buffer = req.rbuffer
-    
+    local buffer = req.luaw_rbuffer
     local statusMesg, url, headerName, headerValue, bodyParts 
-    
+
     while (not req.END) do        
-        
         if (buffer:remainingLength() <= 0) then
             -- read new content from the request socket 
             buffer:clear()
@@ -297,20 +315,20 @@ local function parseHttpRequest(req, streamParse)
                 end
             end
         end
-        
+
         -- parse content present in read buffer
-        local cbtype = parser:parseHttp(buffer)
-        
+        local cbtype, errmesg = parser:parseHttp(buffer)
+
         if (cbtype == HTTP_MESG_BEGIN) then
-            req:reset()
-            headers = req.headers
-            
+          req:reset()
+          headers = req.headers
+
         elseif (cbtype == HTTP_STATUS) then
-            statusMesg = safeAppend(statusMesg, parser:getParsedChunk())
-            
+          statusMesg = safeAppend(statusMesg, parser:getParsedChunk())
+
         elseif (cbtype == HTTP_URL) then
-            url = safeAppend(url, parser:getParsedChunk())
-        
+          url = safeAppend(url, parser:getParsedChunk())
+
         elseif (cbtype == HTTP_HEADER_NAME) then
             if (headerName and headerValue) then
                 addNVPair(headers, headerName, headerValue)
@@ -318,17 +336,17 @@ local function parseHttpRequest(req, streamParse)
             end
             headerValue = nil
             headerName = safeAppend(headerName, parser:getParsedChunk())
-            
+
         elseif (cbtype == HTTP_HEADER_VALUE) then
             headerValue = safeAppend(headerValue, parser:getParsedChunk())
-        
+
         elseif (cbtype == HTTP_HEADERS_DONE) then
             if (headerName and headerValue) then
                 addNVPair(headers, headerName, headerValue)
             end
             headerName = nil
             headerValue = nil
-            
+
             handleKeepAlive(parser, req)
             req.major_version = parser:getHttpMajorVersion()
             req.minor_version = parser:getHttpMinorVersion()
@@ -339,18 +357,18 @@ local function parseHttpRequest(req, streamParse)
                 req.status = parser:getRespStatus()
                 req.statusMesg = statusMesg
             end
-                       
+
             if (streamBody(req, streamParse)) then
                 return
             end
-        
+            
         elseif (cbtype == HTTP_BODY) then
             if (streamBody(req, streamParse)) then
                 return parser:getParsedChunk()
             end
             bodyParts = bodyParts or {}
             table.insert(bodyParts, parser:getParsedChunk())
-        
+
         elseif (cbtype == HTTP_MESG_DONE) then
             -- for the rare boundary case of chunked transfer encoding, 
             -- where headers may continue after the last body chunk
@@ -367,16 +385,15 @@ local function parseHttpRequest(req, streamParse)
             req.END = true
             handleKeepAlive(parser, req)
             -- reset parser for next request in case this connection is a persistent/pipelined HTTP connection
-            parser:initHttpParser()    
-            
+            parser:initHttpParser()
             return body
-    
+   
         elseif  (cbtype == HTTP_NONE) then
             -- ignore
-        
+
         else
             conn:close()
-            return error("Invalid HTTP parser callback# "..tostring(cbtype).." requested. Error: "..remaining)
+            return error("Invalid HTTP parser callback# "..tostring(cbtype).." requested. Error: "..tostring(errmesg))
         end
     end 
     return req.body
@@ -504,7 +521,6 @@ end
 local function urlEncodeParams(params)
     if params then
         local encodedParams = {}
-        local len = 0
 
         for key, val in pairs(params) do
             local ueKey = urlEncode(key)
@@ -513,17 +529,15 @@ local function urlEncodeParams(params)
             local ueVal = urlEncode(val)
             table.insert(encodedParams, ueVal)
             table.insert(encodedParams, "&")
-            len = len + #ueKey + #ueVal + 2 -- +2 for '&' and '='
         end
 
         if (#encodedParams > 0) then
             table.remove(encodedParams) -- remove the last extra "&"
-            len = len - 1
-            return encodedParams, len
+            return encodedParams
         end
     end
 
-    return nil, 0
+    return nil
 end
 
 function buildURL(req)
@@ -555,105 +569,125 @@ local function firstRequestLine(req)
     return table.concat(line)
 end
 
-local function sendBuffer(wbuffer, conn, writeTimeout, isChunked)
-	local chunk = table.concat(wbuffer)
-	wbuffer:clear()
-    if (isChunked) then
-        chunk = string.format("%x\r\n", #chunk)..chunk..CRLF
-    end
-    conn:write(chunk, writeTimeout)
+local function bufferHeader(buffers, name, value)
+    buffers:append(tostring(name))
+    buffers:append(": ")
+    buffers:append(tostring(value))
+    buffers:append(CRLF)
 end
 
-local function bufferHeader(wbuffer, name, value)
-    wbuffer:append(tostring(name))
-    wbuffer:append(": ")
-    wbuffer:append(tostring(value))
-    wbuffer:append(CRLF)
-end
-
-local function bufferHeaders(headers, wbuffer)
+local function bufferHeaders(headers, buffers)
     if (headers) then
         for name,value in pairs(headers) do
             if (type(value) == 'table') then
                 for i,v in ipairs(value) do
-                    bufferHeader(wbuffer, name, v)
+                    bufferHeader(buffers, name, v)
                 end
             else
-                bufferHeader(wbuffer, name, value)
+                bufferHeader(buffers, name, value)
             end
             headers[name] = nil
         end
     end
-    wbuffer:append(CRLF)
+    buffers:append(CRLF)
 end
 
 local function startStreaming(resp)
     resp.luaw_is_chunked = true
     resp:addHeader('Transfer-Encoding', 'chunked')
 
-    local headers = resp.headers
-    local conn = resp.luaw_conn
-    local writeTimeout = resp.writeTimeout
-
-    -- use separate buffer from "bodyBuffer" to serialize headers
-    local headersBuffer = newWriteBuffer()
+    local headersBuffer = newBufferChain()
     headersBuffer:append(resp:firstLine())
-    bufferHeaders(headers, headersBuffer)
+    bufferHeaders(resp.headers, headersBuffer)
 
     -- flush up to HTTP headers end without chunked encoding before actual body starts
-    sendBuffer(headersBuffer, conn, writeTimeout, false)
+    local conn = resp.luaw_conn
+    conn:write(headersBuffer, resp.writeTimeout)
+    headersBuffer:free()
+    
+    -- now setup wbuffers to store chunk header, actual chunk and chunk trailer in that order
+    local wbuffers = resp.luaw_wbuffers
+    wbuffers:clear()
+    wbuffers[1] = wbuffers[1] or luaw_tcp_lib.newBuffer(8) -- chunk header
+    wbuffers[2] = wbuffers[2] or luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE) -- actual chunk
+    wbuffers[3] = wbuffers[3] or luaw_tcp_lib.newBuffer(8) -- chunk trailer
 end
+
+local function sendChunk(resp, wbuffers)
+    local chunkHeaderBuffer, chunkBuffer, chunkTrailerBuffer = wbuffers[1], wbuffers[2], wbuffers[3]    
+    local conn = resp.luaw_conn
+    
+    chunkHeaderBuffer:append(string.format("%x\r\n", chunkBuffer:length())) 
+    chunkTrailerBuffer:append(CRLF)
+    conn:write(wbuffers, resp.writeTimeout) 
+    wbuffers:clear()
+end
+
+local function appendChunk(resp, bodyPart)
+    local wbuffers = resp.luaw_wbuffers
+    local chunkBuffer = wbuffers[2]
+    
+    local status = chunkBuffer:append(bodyPart)
+    if (not status) then
+        -- chunk full, send to client
+        sendChunk(resp, wbuffers)
+        
+        -- retry original bodyPart
+        status = chunkBuffer:append(bodyPart)
+        if (not status) then
+            --buffer completely empty, still too small. resize.
+            chunkBuffer:resize(#bodyPart+1)
+            chunkBuffer:append(bodyPart)
+        end
+    end
+end    
 
 local function appendBody(resp, bodyPart)
     if not bodyPart then
         return
     end
-
-    local bodyBuffer = resp.bodyBuffer
-    local len = bodyBuffer:append(bodyPart)
-
-    if ((resp.luaw_is_chunked)and(len >= CONN_BUFFER_SIZE)) then
-        local conn = resp.luaw_conn
-        local writeTimeout = resp.writeTimeout
-        sendBuffer(bodyBuffer, conn, writeTimeout, true)
+    
+    if (resp.luaw_is_chunked) then
+        appendChunk(resp, bodyPart)
+    else
+        resp.luaw_wbuffers:append(bodyPart)
     end
 end
 
 local function writeFullBody(resp)
     local conn = resp.luaw_conn
     local writeTimeout = resp.writeTimeout
-    local bodyBuffer = resp.bodyBuffer
+    local wbuffers = resp.luaw_wbuffers
 
     if (resp.method == 'POST') then
-        local encodedParams, contentLength = urlEncodeParams(resp.params)
+        local encodedParams = urlEncodeParams(resp.params)
         if encodedParams then
             resp:addHeader('Content-Type', 'application/x-www-form-urlencoded')
-            bodyBuffer:append(encodedParams)
+            wbuffers:append(table.concat(encodedParams))
         end
     end
 
-    resp:addHeader('Content-Length', bodyBuffer.len)
+    resp:addHeader('Content-Length', wbuffers:length())
 
     -- first write up to HTTP headers end
-    local headersBuffer = newWriteBuffer()
+    local headersBuffer = newBufferChain()
     headersBuffer:append(resp:firstLine())
     bufferHeaders(resp.headers, headersBuffer)
-    sendBuffer(headersBuffer, conn, writeTimeout, false)
+    conn:write(headersBuffer, writeTimeout)
+    headersBuffer:free()
 
     -- now write body
-    sendBuffer(bodyBuffer, conn, writeTimeout, false)
+    conn:write(wbuffers, resp.writeTimeout)
+    wbuffers:clear()
 end
 
 local function endStreaming(resp)
-    local conn = resp.luaw_conn
-    local writeTimeout = resp.writeTimeout
-    local bodyBuffer = resp.bodyBuffer
-
-    -- flush whatever is remaining in write buffer
-    sendBuffer(bodyBuffer, conn, writeTimeout, true)
-
-    -- add last chunk encoding trailer
-    conn:write("0\r\n\r\n", writeTimeout)
+    local wbuffers = resp.luaw_wbuffers
+    local chunkBuffer = wbuffers[2]    
+    if (chunkBuffer:length() > 0) then
+        sendChunk(resp, wbuffers)
+    end    
+    sendChunk(resp, wbuffers)
 end
 
 local function flush(resp)
@@ -670,26 +704,36 @@ local function close(req)
         conn:close()
         req.luaw_conn = nil
     end
-    local buffer = req.rbuffer
+    local buffer = req.luaw_rbuffer
     if buffer then
         buffer:free()
         req.buffer = nil
     end
+    local wbuffers = req.luaw_wbuffers
+    if (wbuffers) then
+        wbuffers:free()
+    end    
 end
 
 local function reset(req)
     req.headers = {}
     req.url = nil
-    local bodyBuffer = req.bodyBuffer
-    if (bodyBuffer) then
-        bodyBuffer:clear()
-    end
     req.body = nil
     req.END = nil
+    req.EOF = nil
     req.params = nil
     req.parsedURL = nil
     req.status = nil
     req.statusMesg = nil
+    req.luaw_is_chunked = nil
+--    local parser = req.luaw_parser
+--    if (parser) then
+--      parser:initHttpParser()
+--    end
+    local wbuffers = req.luaw_wbuffers
+    if (wbuffers) then
+        wbuffers:clear()
+    end
 end
 
 luaw_http_lib.newServerHttpRequest = function(conn)
@@ -698,7 +742,7 @@ luaw_http_lib.newServerHttpRequest = function(conn)
 	    luaw_conn = conn,
 	    headers = {},
 	    luaw_parser = luaw_http_lib:newHttpRequestParser(),
-        rbuffer = luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE),
+      luaw_rbuffer = luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    isComplete = isComplete,
@@ -718,7 +762,7 @@ luaw_http_lib.newServerHttpResponse = function(conn)
         major_version = 1,
         minor_version = 1,
         headers = {},
-        bodyBuffer = newWriteBuffer(),
+        luaw_wbuffers = newBufferChain(),
         addHeader = addHeader,
         shouldCloseConnection = shouldCloseConnection,
         setStatus = setStatus,
@@ -737,7 +781,7 @@ local function newClientHttpResponse(conn)
 	    luaw_conn = conn,
 	    headers = {},
 	    luaw_parser = luaw_http_lib:newHttpResponseParser(),
-        rbuffer = luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE),
+      luaw_rbuffer = luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE),
 	    addHeader = addHeader,
 	    shouldCloseConnection = shouldCloseConnection,
 	    read = parseHttpRequest,
@@ -780,7 +824,7 @@ luaw_http_lib.newClientHttpRequest = function()
         minor_version = 1,
         method = 'GET',
         headers = {},
-		bodyBuffer = newWriteBuffer(),
+        luaw_wbuffers = newBufferChain(),
         addHeader = addHeader,
         connect = connectReq,
         execute = execute,

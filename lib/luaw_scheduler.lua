@@ -132,7 +132,7 @@ local function resumeThread(threadCtx, ...)
 
     context = threadCtx.requestCtx  -- TLS, per thread context
     local status, state, retVal = coroutine.resume(t, ...)
-    print(status, state, retVal)
+--    print(status, state, retVal)
     context = nil -- reset TLS context
 
     if not status then

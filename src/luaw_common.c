@@ -95,7 +95,6 @@ void luaL_setfuncs (lua_State *L, const luaL_Reg *l, int nup) {
   lua_pop(L, nup);  /* remove upvalues */
 }
 
-
 void luaL_setmetatable (lua_State *L, const char *tname) {
   luaL_checkstack(L, 1, "not enough stack slots");
   luaL_getmetatable(L, tname);

@@ -314,7 +314,7 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
     }
 }
 
-/* lua call spec: conn:write(tid, str, writeTimeout)
+/* lua call spec: conn:write(tid, bufferCount, buffers, writeTimeout)
 Success: status(true), nwritten
 Failure: status(false), error message
 */
@@ -323,36 +323,48 @@ LUA_OBJ_METHOD static int write_buffer(lua_State* l_thread) {
 
     int lua_writer_tid = lua_tointeger(l_thread, 2);
     if (lua_writer_tid == 0) {
-        return error_to_lua(l_thread, "write() specified invalid thread id");
+        return error_to_lua(l_thread, "invalid thread id");
+    }
+    
+    const int buff_count = lua_tointeger(l_thread, 3);
+    if (buff_count <= 0) {
+        return error_to_lua(l_thread, "invalid buffer count");
+    }
+    
+    uv_buf_t* uv_buffs = malloc(sizeof(uv_buf_t) * buff_count);
+    if (uv_buffs == NULL) {
+        return error_to_lua(l_thread, "could not allocate memory for write buffers");
+    }
+    
+    int i = 0;
+    int nwritten = 0;
+    for (; i < buff_count; i++) {
+        lua_rawgeti(l_thread, 4, i+1);
+        LUA_GET_BUFF_OR_ERROR(l_thread, -1, wb);
+        uv_buffs[i].base = wb->buffer;
+        uv_buffs[i].len = wb->end;
+        nwritten += wb->end;
+        lua_pop(l_thread, 1);
     }
 
-    size_t len = 0;
-    const char* buff = lua_tolstring(l_thread, 3, &len);
-
-    if (len > 0) {
-        /* non empty write buffer. Send write request, record writer tid and block in lua */
-        int writeTimeout = lua_tointeger(l_thread, 4);
-
-        uv_buf_t write_buff;
-        write_buff.base = (char*) buff;
-        write_buff.len = len;
-
-        int err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, &write_buff, 1, on_write);
-        if (err_code) {
-            close_connection(conn, err_code);
-            lua_pushboolean(l_thread, 0);
-            lua_pushstring(l_thread,  uv_strerror(err_code));
-            return 2;
-        }
-
-        conn->write_req.data = conn;
-        INCR_REF_COUNT(conn)
-        conn->lua_writer_tid = lua_writer_tid;
-        start_timer(&conn->write_timer, writeTimeout);
+    /* non empty write buffer. Send write request, record writer tid and block in lua */
+    int writeTimeout = lua_tointeger(l_thread, 5);
+    int err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, uv_buffs, buff_count, on_write);
+    free(uv_buffs);
+    if (err_code) {
+        close_connection(conn, err_code);
+        lua_pushboolean(l_thread, 0);
+        lua_pushstring(l_thread,  uv_strerror(err_code));
+        return 2;
     }
+
+    conn->write_req.data = conn;
+    INCR_REF_COUNT(conn)
+    conn->lua_writer_tid = lua_writer_tid;
+    start_timer(&conn->write_timer, writeTimeout);
 
     lua_pushboolean(l_thread, 1);
-    lua_pushinteger(l_thread, len);
+    lua_pushinteger(l_thread, nwritten);
     return 2;
 }
 
@@ -501,6 +513,9 @@ static const struct luaL_Reg luaw_buffer_methods[] = {
     {"capacity", buffer_capacity},
     {"length", buffer_length},
     {"remainingLength", buffer_remaining_content_len},
+    {"remainingContent", buffer_remaining_content},
+    {"append", append},
+    {"resize", resize},
     {"tostring", buffer_tostring},
     {"clear", buffer_clear},
     {"reset", buffer_reset},
