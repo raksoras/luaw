@@ -15,14 +15,21 @@ LUA_LIB_METHOD int new_buffer(lua_State* l_thread) {
         return raise_lua_error(l_thread, "Invalid buffer size");
     }
     
-    buff_t* buff = (buff_t*)calloc(1, (sizeof(buff_t) + buff_cap));
+    buff_t* buff = (buff_t*)calloc(1, sizeof(buff_t));
     if (buff == NULL) {
+        return raise_lua_error(l_thread, "Could not allocate memory for buffer");
+    }
+    
+    buff->buffer = (char*) malloc(buff_cap);
+    if (buff->buffer == NULL) {
+        free(buff);
         return raise_lua_error(l_thread, "Could not allocate memory for buffer");
     }
     buff->cap = buff_cap;
 
     buff_t** lua_ref = lua_newuserdata(l_thread, sizeof(buff_t*));
     if (lua_ref == NULL) {
+        free(buff->buffer);
         free(buff);
         return raise_lua_error(l_thread, "Could not allocate memory for buffer Lua reference");
     }
@@ -37,6 +44,7 @@ LUA_OBJ_METHOD int free_buffer(lua_State* l_thread) {
     if (lua_ref != NULL) {
         buff_t* buff = *lua_ref;
         if (buff != NULL) {
+            free(buff->buffer);
             free(buff);
             *lua_ref = NULL;
         }
@@ -94,6 +102,13 @@ LUA_OBJ_METHOD int buffer_remaining_content_len(lua_State *l_thread) {
     return 1;
 }
 
+LUA_OBJ_METHOD int buffer_remaining_content(lua_State *l_thread) {
+    LUA_GET_BUFF_OR_ERROR(l_thread, 1, buff);
+    int len = remaining_content_len(buff);
+    char* start = buffer_read_start_pos(buff);
+    lua_pushlstring(l_thread, start, len);
+    return 1;
+}
 
 int buffer_remaining_capacity(buff_t* buff) {
     if (buff != NULL) {
@@ -123,3 +138,49 @@ char* buffer_fill_start_pos(buff_t* buff) {
     }
     return NULL;
 }
+
+/*
+* status = buff:append(str)
+*/
+LUA_OBJ_METHOD int append(lua_State *l_thread) {
+    LUA_GET_BUFF_OR_ERROR(l_thread, 1, buff);
+    
+    size_t len;
+    const char* str = lua_tolstring(l_thread, 2, &len);    
+    if (len <= 0) {
+        lua_pushboolean(l_thread, 1);
+        return 1;
+    }
+
+    int remaining_cap = buffer_remaining_capacity(buff);
+    if (len <= remaining_cap) {
+        char* dest = buffer_fill_start_pos(buff);
+        if (dest != NULL) {
+            memcpy(dest, str, len);
+            buff->end += len;
+            lua_pushboolean(l_thread, 1);
+            return 1;
+        }
+    }
+    
+    lua_pushboolean(l_thread, 0);
+    return 1;
+}
+
+LUA_OBJ_METHOD int resize(lua_State *l_thread) {
+    LUA_GET_BUFF_OR_ERROR(l_thread, 1, buff);
+    
+    int newsize = lua_tointeger(l_thread, 2);
+    if (newsize <= 0) {
+        return raise_lua_error(l_thread, "Invalid new size");
+    }
+    
+    buff->buffer = realloc(buff->buffer, newsize);
+    if (buff->buffer == NULL) {
+        return raise_lua_error(l_thread, "Could not resize write buffer");
+    }
+    
+    buff->cap = newsize;
+    return 0;
+}
+

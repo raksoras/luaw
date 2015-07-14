@@ -197,7 +197,7 @@ local function dispatchAction(req, resp)
         -- EOF in case of persistent connections
         return
     end
-
+    
     local webApp, action, pathParams = findAction(req.method, parsedURL.path)
     assert(action, "No action found for path "..parsedURL.path.." for method "..req.method)
 
@@ -207,7 +207,7 @@ local function dispatchAction(req, resp)
         resp.headers['Connection'] = 'Keep-Alive'
     end
 
-    v1, v2 = action.handler(req, resp, pathParams)
+    local v1, v2 = action.handler(req, resp, pathParams)
 
     -- handle action returned response, if any and if resp is not closed
     if v1 and resp.luaw_conn then
@@ -283,11 +283,12 @@ end
 
 local function serviceHTTP(conn)
     conn:startReading()
-
+    local req = luaw_http_lib.newServerHttpRequest(conn)    
+    
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
-    while true do
-        local req = luaw_http_lib.newServerHttpRequest(conn)
-
+    while true do    
+        req:reset()
+      
         -- read and parse full request
         local status, errmesg = pcall(req.read, req)
         if ((not status)or(req.EOF == true)) then
@@ -301,7 +302,6 @@ local function serviceHTTP(conn)
 
         local resp = luaw_http_lib.newServerHttpResponse(conn)
         status, errMesg = pcall(dispatchAction, req, resp)
-
         if (not status) then
             -- send HTTP error response
             resp:setStatus(500)

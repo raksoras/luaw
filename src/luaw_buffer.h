@@ -10,7 +10,7 @@ struct buff_s {
     int cap;            /* buffer capacity */
     int end;            /* end of content available in buffer */
     int pos;            /* position upto which content is consumed from buffer */
-    char buffer[];      /* buffer */
+    char* buffer;       /* buffer */
 };
 
 #define LUA_GET_BUFF_OR_ERROR(L, i, b)                                      \
@@ -28,9 +28,12 @@ extern int buffer_tostring(lua_State *l_thread);
 extern int buffer_clear(lua_State *l_thread);
 extern int buffer_reset(lua_State *l_thread);
 extern int remaining_content_len(buff_t* buff);
+extern int buffer_remaining_content(lua_State *l_thread);
 extern int buffer_remaining_content_len(lua_State *l_thread);
 extern int buffer_remaining_capacity(buff_t* buff);
 extern char* buffer_read_start_pos(buff_t* buff);
 extern char* buffer_fill_start_pos(buff_t* buff);
+extern int append(lua_State *l_thread);
+extern int resize(lua_State *l_thread);
 
 #endif

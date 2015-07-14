@@ -104,8 +104,8 @@ end
 --end
 
 
-connMT.write = function(self, str, writeTimeout)
-    local status, nwritten = writeInternal(self, scheduler.tid(), str, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
+connMT.write = function(self, wbuffers, writeTimeout)
+    local status, nwritten = writeInternal(self, scheduler.tid(), #wbuffers, wbuffers, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
     if ((status)and(nwritten > 0)) then
         -- there is something to write, yield for libuv callback
         status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
