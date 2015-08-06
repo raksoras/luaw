@@ -23,7 +23,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-//#include <assert.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -37,11 +36,7 @@
 #include "uv.h"
 #include "luaw_common.h"
 #include "luaw_buffer.h"
-//#include "http_parser.h"
-//#include "luaw_http_parser.h"
 #include "luaw_tcp.h"
-//#include "lfs.h"
-
 
 
 connection_t* new_connection(lua_State* L) {

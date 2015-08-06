@@ -285,7 +285,7 @@ static int parse_http(lua_State *L) {
     
 	/* every http_parser_execute() does not necessarily cause callback to be invoked, we need to know if it did call the callback */
 	lhttp_parser->http_cb = http_cb_none;
-  const char* data = buffer_read_start_pos(buff);
+    const char* data = buffer_read_start_pos(buff);
     
 	int nparsed = http_parser_execute(parser, &parser_settings, data, len);
     
