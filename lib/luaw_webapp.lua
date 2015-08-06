@@ -104,6 +104,11 @@ local function findAction(method, path)
             route = nextRoute
         end
     end
+    
+    if (not route) then
+        -- check if default match all route exists
+        route = webApp.root.childRoutes['*']
+    end
 
     if (route) then
         local action = route[method]
@@ -195,7 +200,7 @@ local function dispatchAction(req, resp)
 
     if not(req.method and  parsedURL) then
         -- EOF in case of persistent connections
-        return
+        return false, "No URL found in HTTP request"
     end
     
     local webApp, action, pathParams = findAction(req.method, parsedURL.path)
@@ -205,6 +210,10 @@ local function dispatchAction(req, resp)
         resp.headers['Connection'] = 'close'
     else
         resp.headers['Connection'] = 'Keep-Alive'
+    end
+
+    if (not action.streamBody) then
+        req:readTillEnd()
     end
 
     local v1, v2 = action.handler(req, resp, pathParams)
@@ -239,14 +248,21 @@ local function dispatchAction(req, resp)
     end
 
     -- flush in case resp is not closed
-    if resp.luaw_conn then resp:flush() end
+    if resp.luaw_conn then 
+		resp:flush()
+    	-- finally, consume any outstanding bytes of the current request just in case some badly written
+    	-- user handler returns prematurely without reading the request till its end. Such handlers may 
+    	-- cause issues in case of HTTP pipelining
+    	req:readTillEnd()
+	end
 end
 
 local function registerResource(resource)
     local route = assert(webapp.root, "webapp root not defined")
     local path = assert(resource.path , "Handler definition is missing value for 'path'")
     local handlerFn = assert(resource.handler, "Handler definition is missing 'handler' function")
-    local method = resource.method or 'SERVICE'
+    local streamBody = resource.streamBody or false
+    local method = resource.method or 'SERVICE'    
     if(not HTTP_METHODS[method]) then
         error(method.." is not a valid HTTP method")
     end
@@ -278,19 +294,22 @@ local function registerResource(resource)
 
     assert(route, "Could not register handler for path "..path)
     assert((not route[method]), 'Handler already registered for '..method..' for path "/'..webapp.path..'/'..path..'"')
-    route[method] = {handler = handlerFn}
+    route[method] = {handler = handlerFn, streamBody = streamBody}
 end
 
 local function serviceHTTP(conn)
     conn:startReading()
-    local req = luaw_http_lib.newServerHttpRequest(conn)    
+    local req = luaw_http_lib.newServerHttpRequest(conn)
+    local resp = luaw_http_lib.newServerHttpResponse(conn)
     
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do    
         req:reset()
-      
+        resp:reset()
+
         -- read and parse full request
-        local status, errmesg = pcall(req.read, req)
+        local status, errmesg = pcall(req.read, req, true)
+        
         if ((not status)or(req.EOF == true)) then
             conn:close()
             if (status) then
@@ -300,7 +319,6 @@ local function serviceHTTP(conn)
             return "connection reset by peer"
         end
 
-        local resp = luaw_http_lib.newServerHttpResponse(conn)
         status, errMesg = pcall(dispatchAction, req, resp)
         if (not status) then
             -- send HTTP error response

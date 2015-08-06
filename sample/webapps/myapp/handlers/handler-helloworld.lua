@@ -3,7 +3,7 @@ registerHandler {
     path = 'helloworld',
 
     handler = function(req, resp, pathParams)
-        return "Hello World!"
+        return "Hello World!\n"
     end
 }
 
