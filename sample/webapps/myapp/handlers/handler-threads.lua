@@ -13,7 +13,7 @@ registerHandler {
     method = 'GET',
     path = '/threads',
 
-    handler = function(req, resp, pathParams)
+    handler = function(req, resp)
         local t1 = scheduler.startUserThread(timerFn, 1, 2000)
         local t2 = scheduler.startUserThread(timerFn, 2, 5000)
         local t3 = scheduler.startUserThread(timerFn, 3, 7000)
@@ -23,6 +23,6 @@ registerHandler {
         print(t2:join())
         print("Handler resumed")
         
-        return 'OK'
+        resp:appendBody('OK')
     end
 }

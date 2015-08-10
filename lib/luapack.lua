@@ -64,10 +64,10 @@ end
 -- read functions
 
 local function readNextBuffer(lpack)
-    if not lpack.EOF then
+    if not lpack.luaw_EOF then
         local newBuffer = lpack:readFn()
         if not newBuffer then
-            lpack.EOF = true
+            lpack.luaw_EOF = true
         else
             local buffer = lpack.buffer
             local offset = lpack.offset
@@ -82,7 +82,7 @@ local function readNextBuffer(lpack)
 end
 
 local function done(lpack)
-    return ((lpack.EOF)and(lpack.offset >= #lpack.buffer))
+    return ((lpack.luaw_EOF)and(lpack.offset >= #lpack.buffer))
 end
 
 local function readNumber(lpack, numType)
@@ -222,7 +222,7 @@ end
 
 local function newLPackReader()
     local lpackReader = luaw_lpack_lib.newLPackParser();
-    lpackReader.EOF = false
+    lpackReader.luaw_EOF = false
     lpackReader.buffer = ''
     lpackReader.offset = 0
     lpackReader.done = done
@@ -256,7 +256,7 @@ local function newLPackReqReader(req)
     assert(req, "Request cannot be null")
     local lpackReader = newLPackReader()
     lpackReader.readFn = function()
-        if ((not req.EOF)and(not req.END)) then
+        if ((not req.luaw_EOF)and(not req.luaw_END)) then
             req:read()
             local str =  req:consumeBodyChunkParsed()
             if (not str) then

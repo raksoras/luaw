@@ -29,7 +29,6 @@ local TS_RUNNABLE = constants.TS_RUNNABLE
 
 local CONN_BUFFER_SIZE = constants.CONN_BUFFER_SIZE
 
-local EOF = constants.EOF
 local CRLF = constants.CRLF
 
 local MULTIPART_BEGIN = constants.MULTIPART_BEGIN
@@ -144,8 +143,6 @@ local function newBufferChain()
 end
 
 
---local parserMT = getmetatable(luaw_http_lib.newHttpRequestParser())
-
 -- Must match C enum http_parser_cb_type
 local HTTP_NONE = 1
 local HTTP_MESG_BEGIN = 2
@@ -175,7 +172,6 @@ end
 local function addHeader(req, headerName, headerValue)
     addNVPair(req.headers, headerName, headerValue)
 end
-
 
 local function urlDecode(str)
     return (str:gsub('+', ' '):gsub("%%(%x%x)", function(xx) return string.char(tonumber(xx, 16)) end))
@@ -237,7 +233,7 @@ end
 local function handleKeepAlive(parser, req)
     if (not parser:shouldKeepAlive()) then
         req.headers['Connection'] = 'close'
-        req.EOF = true
+        req.luaw_EOF = true
     end
 end    
 
@@ -292,14 +288,14 @@ end
 --    end
 --end
 
-local function parseHttpRequest(req, streamParse)    
+local function readHttpHeaders(req)    
     local conn = req.luaw_conn
     local parser = req.luaw_parser    
     local headers = req.headers
     local buffer = req.luaw_rbuffer
-    local statusMesg, url, headerName, headerValue, bodyParts 
+    local statusMesg, url, headerName, headerValue
 
-    while (not req.END) do        
+    while (not req.luaw_END) do        
         if (buffer:remainingLength() <= 0) then
             -- read new content from the request socket 
             buffer:clear()
@@ -308,9 +304,9 @@ local function parseHttpRequest(req, streamParse)
             if (not status) then
                 if (err == 'EOF') then
                     headers['Connection'] = 'close'
-                    req.END = true
-                    req.EOF = true
-                    return
+                    req.luaw_END = true
+                    req.luaw_EOF = true
+                    break
                 else
                     return error(err)
                 end
@@ -345,8 +341,6 @@ local function parseHttpRequest(req, streamParse)
             if (headerName and headerValue) then
                 addNVPair(headers, headerName, headerValue)
             end
-            headerName = nil
-            headerValue = nil
 
             handleKeepAlive(parser, req)
             req.major_version = parser:getHttpMajorVersion()
@@ -359,11 +353,46 @@ local function parseHttpRequest(req, streamParse)
                 req.statusMesg = statusMesg
             end
 
-            if (streamParse) then
-                return
-            end
+            break
 
-        elseif (cbtype == HTTP_BODY) then
+        elseif  (cbtype == HTTP_NONE) then
+            -- ignore
+
+        else
+            conn:close()
+            return error("Invalid HTTP parser callback# "..tostring(cbtype).." requested. Error: "..tostring(errmesg))
+        end
+    end 
+end
+
+local function readHttpBody(req, streamParse)    
+    local conn = req.luaw_conn
+    local parser = req.luaw_parser    
+    local buffer = req.luaw_rbuffer
+    local bodyParts 
+
+    while (not req.luaw_END) do        
+        if (buffer:remainingLength() <= 0) then
+            -- read new content from the request socket 
+            buffer:clear()
+            local status, err = conn:read(buffer, req.readTimeout)
+
+            if (not status) then
+                if (err == 'EOF') then
+                    headers['Connection'] = 'close'
+                    req.luaw_END = true
+                    req.luaw_EOF = true
+                    return
+                else
+                    return error(err)
+                end
+            end
+        end
+
+        -- parse content present in read buffer
+        local cbtype, errmesg = parser:parseHttp(buffer)
+
+        if (cbtype == HTTP_BODY) then
             if (streamParse) then
                 return parser:getParsedChunk()
             end
@@ -371,23 +400,14 @@ local function parseHttpRequest(req, streamParse)
             table.insert(bodyParts, parser:getParsedChunk())
 
         elseif (cbtype == HTTP_MESG_DONE) then
-            -- for the rare boundary case of chunked transfer encoding, 
-            -- where headers may continue after the last body chunk
-            if (headerName and headerValue) then
-                addNVPair(headers, headerName, headerValue)
-            end
-            headerName = nil
-            headerValue = nil
-
-            local body
             if (bodyParts) then
                 body = parseBody(req, bodyParts)
             end
-            req.END = true
+            req.luaw_END = true
             handleKeepAlive(parser, req)
             -- reset parser for next request in case this connection is a persistent/pipelined HTTP connection
             parser:initHttpParser()
-            return body
+            break
 
         elseif  (cbtype == HTTP_NONE) then
             -- ignore
@@ -402,9 +422,9 @@ end
 
 local function patternRead(content, searchstr, req)
     local buff = content
-    while ((not req.END) and
+    while ((not req.luaw_END) and
         ((not content)or(not content:find(searchstr, 1, true)))) do
-        content = parseHttpRequest(req, true)
+        content = readHttpBody(req, true)
         buff = safeAppend(buff, content)
     end
     return buff
@@ -412,9 +432,9 @@ end
 
 local function lengthRead(content, len, req)
     local buff = content
-    while ((not req.END) and
+    while ((not req.luaw_END) and
         ((not buff)or(#buff < len))) do
-        content = parseHttpRequest(req, true)
+        content = readHttpBody(req, true)
         buff = safeAppend(buff, content)
     end
     return buff
@@ -471,7 +491,7 @@ function fetchNextPart(req, state)
 
         -- double the size of max possible boundary length: endBoundary + CRLF
         content = lengthRead(content, 2*(#endBoundary + 2), req)        
-        if ((not content)and(req.END)) then
+        if ((not content)and(req.luaw_END)) then
             return MULTIPART_END
         end
 
@@ -504,7 +524,7 @@ local function multiPartIterator(req)
 end
 
 local function shouldCloseConnection(req)
-    if req and req.EOF then
+    if req and req.luaw_EOF then
         return true
     end
 end
@@ -559,6 +579,9 @@ local function setStatus(resp, status)
 end
 
 local function firstResponseLine(resp)
+    if (not resp.status) then
+        resp:setStatus(200)
+    end
     local line = {"HTTP/", resp.major_version or 1, ".", resp.minor_version or 1,
         " ", resp.status, " ", resp.statusMesg, CRLF}
     return table.concat(line)
@@ -717,20 +740,13 @@ local function close(req)
     end    
 end
 
-local function readTillEnd(req)
-    -- Completely parse pending HTTP request
-    if (not req.END) then
-        parseHttpRequest(req)
-    end
-end
-
 local function getBody(req)
-    readTillEnd(req)
+    readHttpBody(req)
     return req.luaw_body
 end
 
 local function getParams(req)
-    readTillEnd(req)
+    readHttpBody(req)
     return req.luaw_params
 end
 
@@ -739,8 +755,8 @@ local function reset(httpMesg)
     httpMesg.status = nil
     httpMesg.statusMesg = nil
     httpMesg.URL = nil
-    httpMesg.END = nil
-    httpMesg.EOF = nil
+    httpMesg.luaw_END = nil
+    httpMesg.luaw_EOF = nil
     httpMesg.luaw_body = nil
     httpMesg.luaw_params = nil
     httpMesg.luaw_parsedURL = nil
@@ -764,9 +780,8 @@ luaw_http_lib.newServerHttpRequest = function(conn)
         luaw_rbuffer = luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE),
         addHeader = addHeader,
         shouldCloseConnection = shouldCloseConnection,
-        isComplete = isComplete,
-        read = parseHttpRequest,
-        readTillEnd = readTillEnd,
+        readHeaders = readHttpHeaders,
+        readBody = readHttpBody;
         getBody = getBody,
         getParams = getParams,
         isMultipart = isMultipart,
@@ -803,8 +818,8 @@ local function newClientHttpResponse(conn)
         luaw_rbuffer = luaw_tcp_lib.newBuffer(CONN_BUFFER_SIZE),
         addHeader = addHeader,
         shouldCloseConnection = shouldCloseConnection,
-        read = parseHttpRequest,
-        readTillEnd = readTillEnd,
+        readHeaders = readHttpHeaders,
+        readBody = readHttpBody;
         getBody = getBody,
         getParams = getParams,
         reset = reset,

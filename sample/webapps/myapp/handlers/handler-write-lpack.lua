@@ -50,7 +50,7 @@ local mesg = {
             bigstr = big_str,
             positive = true,
             negative = false
-          },
+        },
         {
             name = "Bart",
             gender = "M",
@@ -72,7 +72,7 @@ local mesg = {
             bigstr = big_str,
             positive = true,
             negative = false
-          },
+        },
         {
             name = "Maggy",
             gender = "?"
@@ -108,12 +108,12 @@ registerHandler {
     method = 'GET',
     path = 'genlpack',
 
-	handler = function(req, resp, pathParams)
-	    resp:setStatus(200)
+    handler = function(req, resp)
+        resp:setStatus(200)
         local lpackWriter = lpack.newLPackRespWriter(resp)
         if (req.params['dict'] == 'true') then
             lpackWriter:useDictionary(dict)
         end
         lpackWriter:write(mesg)
-	end
+    end
 }

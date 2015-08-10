@@ -7,10 +7,10 @@ end
 
 
 registerHandler {
-    method = 'POST',
-    path = 'filesupload',
+  method = 'POST',
+  path = 'filesupload',
 
-	handler = function(req, resp, pathParams)
+	handler = function(req, resp)
 	    if (req:isMultipart()) then
             local token, fieldName, fileName, contentType
             local buffer = {}
@@ -21,8 +21,9 @@ registerHandler {
                 append(buffer, contentType)
                 table.insert(buffer,"\n")
             end
-            return table.concat(buffer)
-	    end
-	    return "Not a multi-part file upload"
+            resp:appendBody(table.concat(buffer))
+	    else
+            resp:appendBody("Not a multi-part file upload")
+        end
 	end
 }

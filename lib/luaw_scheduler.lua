@@ -96,8 +96,8 @@ local function addToRunQueue(threadCtx)
 end
 
 local function join(threadCtx)
-    if ((threadCtx)and(threadCtx.state)and(threadCtx.state ~=TS_DONE)) then
-        threadCtx.joinedBy = currentRunningThreadCtx
+    if ((threadCtx)and(threadCtx.state)and(threadCtx.state ~= TS_DONE)) then
+        threadCtx.luaw_joinedBy = currentRunningThreadCtx
         coroutine.yield(TS_BLOCKED_THREAD)
     end
     return threadCtx.result
@@ -152,9 +152,9 @@ local function resumeThread(threadCtx, ...)
         end
         
         --unblock joined thread, if any
-        local joinedBy = threadCtx.joinedBy
+        local joinedBy = threadCtx.luaw_joinedBy
         if joinedBy then
-            threadCtx.joinedBy = nil
+            threadCtx.luaw_joinedBy = nil
             addToRunQueue(joinedBy)
         end
 

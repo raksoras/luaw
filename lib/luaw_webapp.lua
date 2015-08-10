@@ -65,12 +65,6 @@ local function findFiles(path, pattern, matches)
     return matches
 end
 
-local pathIterator = luaw_utils_lib.splitter('/')
-local function splitPath(path)
-    if not path then return luaw_util_lib.nilFn end
-    return pathIterator, path, 0
-end
-
 local function findAction(method, path)
     assert(method, "HTTP method may not be nil")
     assert(method, "HTTP request path may not be nil")
@@ -79,7 +73,7 @@ local function findAction(method, path)
     local route = nil
     local pathParams = {}
 
-    for idx, pseg in splitPath(path) do
+    for pseg in string.gmatch(path, "([^/]+)") do
         -- first iteration only
         if not webApp then
             webApp = registeredWebApps[pseg]
@@ -92,19 +86,28 @@ local function findAction(method, path)
             end
             route = webApp.root
         else
-            local nextRoute = route.childRoutes[pseg]
+            local childRoutes = route.childRoutes
+            if (not childRoutes) then
+                return nil
+            end
+        
+            local nextRoute = childRoutes[pseg]
             if not nextRoute then
                 -- may be it's a path param
-                nextRoute = route.childRoutes["_path_param_"]
+                nextRoute = childRoutes["_path_param_"]
                 if nextRoute then
                     pathParams[nextRoute.pathParam] = nextRoute.pathParamType.valueOf(pseg)
                 end
             end
-            if not nextRoute then return nil end
+            
+            if not nextRoute then 
+                return nil 
+            end
+            
             route = nextRoute
         end
     end
-    
+
     if (not route) then
         -- check if default match all route exists
         route = webApp.root.childRoutes['*']
@@ -120,7 +123,13 @@ local function findAction(method, path)
     end
 end
 
-local function renderView(req, resp, pathParams, model, view)
+local function renderView(resp, viewPath, model)
+    local compiledView = resp.luaw_views[viewPath]
+    if (not compiledView) then
+        resp:appendBody('Missing view definition: '..viewPath)
+        return
+    end
+
     local isTagOpen = false
     local indent = 0
 
@@ -188,84 +197,57 @@ local function renderView(req, resp, pathParams, model, view)
     end
 
     -- render view
-    if ((req.major_version >= 1)and(req.minor_version >= 1)) then
+    if (resp.luaw_view_chunked) then
         resp:startStreaming()
     end
-    view(req, resp, pathParams, model, BEGIN, TEXT, END)
+    
+    compiledView(resp, model, BEGIN, TEXT, END)
 end
 
-local function dispatchAction(req, resp)
+local function dispatch(req, resp)
     assert(req, "HTTP request may not be nil")
     local parsedURL = req.parsedURL
 
     if not(req.method and  parsedURL) then
-        -- EOF in case of persistent connections
         return false, "No URL found in HTTP request"
     end
-    
+
     local webApp, action, pathParams = findAction(req.method, parsedURL.path)
     assert(action, "No action found for path "..parsedURL.path.." for method "..req.method)
 
+    req.pathParams = pathParams
+    resp.luaw_views = webApp.compiledViews    
     if req:shouldCloseConnection() then
         resp.headers['Connection'] = 'close'
     else
         resp.headers['Connection'] = 'Keep-Alive'
     end
 
-    if (not action.streamBody) then
-        req:readTillEnd()
+    resp.renderView = renderView
+    -- use chunked encoding response if request was HTTP 1.1 or greater
+    if ((req.major_version >= 1)and(req.minor_version >= 1)) then
+        resp.luaw_view_chunked = true
     end
-
-    local v1, v2 = action.handler(req, resp, pathParams)
-
-    -- handle action returned response, if any
-    if v1 then
-        if (type(v1) == 'number') then
-            -- v1 is HTTP status
-            resp:setStatus(v1)
-            --resp:startStreaming()
-            if v2 then
-                -- v2 is body content
-                resp:appendBody(tostring(v2))
-            end
-        else
-            if not resp.statusCode then
-                resp:setStatus(200)
-            end
-            --resp:startStreaming()
-            if ((type(v1) == 'string')and(v2)) then
-                -- v1 is view path, v2 is view model
-                local compiledView = webApp.compiledViews[v1]
-                if not compiledView then
-                    error("View '"..tostring(v1).."' is not defined")
-                end
-                renderView(req, resp, pathParams, v2, compiledView)
-            else
-                -- v1 is the body content itself
-                resp:appendBody(tostring(v1))
-            end
-        end
-    end
-    resp:flush()
+    action.handler(req, resp, pathParams)
+    -- Consume any outstanding bytes of the current request just in case some badly written
+    -- user handler returns prematurely without reading the request fully. Such incomplete
+    -- readers may cause issues in processing subsequent requests in case of HTTP pipelining.
+    req:readBody()
     
-    -- finally, consume any outstanding bytes of the current request just in case some badly written
-    -- user handler returns prematurely without reading the request till its end. Such handlers may 
-    -- cause issues in case of HTTP pipelining
-    req:readTillEnd()
+    resp:flush()
 end
 
 local function registerResource(resource)
+    assert(webapp, "webapp not initialized")
     local route = assert(webapp.root, "webapp root not defined")
     local path = assert(resource.path , "Handler definition is missing value for 'path'")
     local handlerFn = assert(resource.handler, "Handler definition is missing 'handler' function")
-    local streamBody = resource.streamBody or false
     local method = resource.method or 'SERVICE'    
     if(not HTTP_METHODS[method]) then
         error(method.." is not a valid HTTP method")
     end
 
-
-    for idx, pseg in splitPath(path) do
+    for pseg in string.gmatch(path, "([^/]+)") do
         local firstChar = string.byte(pseg)
         local pathParam = nil
         if ((firstChar == STRING_PATH_PARAM.start)or(firstChar == NUM_PATH_PARAM.start)) then
@@ -273,9 +255,15 @@ local function registerResource(resource)
             pseg = "_path_param_"
         end
 
-        local nextRoute = route.childRoutes[pseg]
+        local childRoutes = route.childRoutes
+        if (not childRoutes) then
+            childRoutes = {}
+            route.childRoutes = childRoutes
+        end
+        
+        local nextRoute = childRoutes[pseg]
         if not nextRoute then
-            nextRoute = { childRoutes = {} }
+            nextRoute = {}
             if pathParam then
                 nextRoute.pathParam = pathParam
                 if (firstChar == NUM_PATH_PARAM.start) then
@@ -284,30 +272,30 @@ local function registerResource(resource)
                     nextRoute.pathParamType = STRING_PATH_PARAM
                 end
             end
-            route.childRoutes[pseg] = nextRoute
+            childRoutes[pseg] = nextRoute
         end
         route = nextRoute
     end
 
     assert(route, "Could not register handler for path "..path)
     assert((not route[method]), 'Handler already registered for '..method..' for path "/'..webapp.path..'/'..path..'"')
-    route[method] = {handler = handlerFn, streamBody = streamBody}
+    route[method] = {handler = handlerFn}
 end
 
 local function serviceHTTP(conn)
     conn:startReading()
     local req = luaw_http_lib.newServerHttpRequest(conn)
     local resp = luaw_http_lib.newServerHttpResponse(conn)
-    
+
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do    
         req:reset()
         resp:reset()
 
-        -- read and parse full request
-        local status, errmesg = pcall(req.read, req, true)
-        
-        if ((not status)or(req.EOF == true)) then
+        -- read and parse request till HTTP headers
+        local status, errmesg = pcall(req.readHeaders, req)
+
+        if ((not status)or(req.luaw_EOF == true)) then
             conn:close()
             if (status) then
                 return "read time out"
@@ -316,7 +304,7 @@ local function serviceHTTP(conn)
             return "connection reset by peer"
         end
 
-        status, errMesg = pcall(dispatchAction, req, resp)
+        status, errMesg = pcall(dispatch, req, resp)
         if (not status) then
             -- send HTTP error response
             resp:setStatus(500)
@@ -334,11 +322,11 @@ local function serviceHTTP(conn)
     end
 end
 
-local function toFullPath(appRoot, files)
+local function toFullPath(appBaseDir, files)
     local fullPaths = {}
     if files then
         for i, file in ipairs(files) do
-            table.insert(fullPaths, appRoot..'/'..file)
+            table.insert(fullPaths, appBaseDir..'/'..file)
         end
     end
     return fullPaths
@@ -348,7 +336,7 @@ local function loadWebApp(appName, appDir)
     local app = {}
 
     app.path = assert(appName, "Missing mandatory configuration property 'path'")
-    app.appRoot = assert(appDir, "Missing mandatory configuration property 'root_dir'")
+    app.appBaseDir = assert(appDir, "Missing mandatory configuration property 'root_dir'")
 
     if (registeredWebApps[app.path]) then
         error('Anothe web app is already registered for path '..app.path)
@@ -358,24 +346,24 @@ local function loadWebApp(appName, appDir)
     app.root = { childRoutes = {} }
 
     -- Load resource handlers
-    local resources = toFullPath(app.appRoot, luaw_webapp.resources)
+    local resources = toFullPath(app.appBaseDir, luaw_webapp.resources)
     if luaw_webapp.resourcePattern then
-        resources = findFiles(app.appRoot, luaw_webapp.resourcePattern, resources)
+        resources = findFiles(app.appBaseDir, luaw_webapp.resourcePattern, resources)
     end
-    assert((resources and (#resources > 0)), "Either 'resources' or 'resourcePattern' must be specified in a web app configuration")
+    assert((resources and (#resources > 0)), "Either 'resources' or 'resourcePattern' must be specified in a web.lua")
     app.resources = resources
 
     -- Load view files if any
-    local views = toFullPath(app.appRoot, luaw_webapp.views)
+    local views = toFullPath(app.appBaseDir, luaw_webapp.views)
     if luaw_webapp.viewPattern then
-        views = findFiles(app.appRoot, luaw_webapp.viewPattern, views)
+        views = findFiles(app.appBaseDir, luaw_webapp.viewPattern, views)
     end
     app.views = views
 
     return app
 end
 
-local function loadView(viewPath, buff)
+local function loadView(viewPath)
     local firstLine = true
     local lastLine = false
     local viewLines = io.lines(viewPath)
@@ -385,7 +373,7 @@ local function loadView(viewPath, buff)
 
         if firstLine then
             firstLine = false
-            line = "return function(req, resp, pathParams, model, BEGIN, TEXT, END)"
+            line = "return function(resp, model, BEGIN, TEXT, END) "
         else
             if (not lastLine) then
                 local vl = viewLines()
@@ -398,7 +386,6 @@ local function loadView(viewPath, buff)
             end
         end
         if line then
-            table.insert(buff, line)
             return (line .. '\n')
         end
     end
@@ -420,25 +407,20 @@ local function startWebApp(app)
     -- compile views
     local views = app.views
     local compiledViews = {}
-    local appRootLen = string.len(app.appRoot) + 1
+    local appBaseDirLen = string.len(app.appBaseDir) + 1
     for i,view in ipairs(views) do
-        local relativeViewPath = string.sub(view, appRootLen)
+        local relativeViewPath = string.sub(view, appBaseDirLen)
         luaw_utils_lib.formattedLine(".Loading view "..relativeViewPath)
-        local viewBuff = {}
-        local viewDefn = loadView(view, viewBuff)
+        local viewDefn = loadView(view)
         local compiledView, errMesg = load(viewDefn, relativeViewPath)
         if (not compiledView) then
             luaw_utils_lib.formattedLine("\nError while compiling view: "..view)
-            luaw_utils_lib.formattedLine("<SOURCE>")
-            for i, line in ipairs(viewBuff) do
-                print(tostring(i)..":\t"..tostring(line))
-            end
-            luaw_utils_lib.formattedLine("<SOURCE>")
             error(errMesg)
         end
         compiledViews[relativeViewPath] = compiledView()
     end
     app.views = nil
+    app.resources = nil
     app.compiledViews = compiledViews
     luaw_utils_lib.formattedLine("#Compiled total "..#views.." views")
 end
@@ -458,7 +440,9 @@ local function init()
                         local app = loadWebApp(webappName, webappDir)
                         startWebApp(app)
                         luaw_utils_lib.formattedLine('Webapp '..webappName..' started', 120, '*')
-                        webapp = nil  -- reset global variable
+                        -- reset global variables
+                        luaw_webapp = nil
+                        webapp = nil  
                     end
                 end
             end
@@ -471,6 +455,6 @@ luaw_http_lib.request_handler = serviceHTTP
 
 return {
     init = init,
-    dispatchAction = dispatchAction,
+    dispatch = dispatch,
     serviceHTTP = serviceHTTP
 }
