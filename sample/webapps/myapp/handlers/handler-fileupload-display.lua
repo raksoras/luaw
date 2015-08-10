@@ -3,7 +3,7 @@ registerHandler {
     path = 'showform',
 
 	handler = function(req, resp, pathParams)
-	    return [[
+	    resp:appendBody [[
             <!DOCTYPE html>
             <html lang="en">
                 <head>

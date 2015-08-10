@@ -93,7 +93,7 @@ void init_luaw_server(lua_State* L) {
 
     lua_getfield(L, -1, "request_handler");
     if (!lua_isfunction(L, -1)) {
-        fprintf(stderr, "Main HTTP request handler function (Luaw.request_handler) not set\n");
+        fprintf(stderr, "Main HTTP request handler function (luaw_http_lib.request_handler) not set\n");
         exit(EXIT_FAILURE);
     }
     service_http_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -286,7 +286,7 @@ int main (int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-    l_global = luaL_newstate();
+  l_global = luaL_newstate();
 	if (!l_global) {
 		fprintf(stderr, "Could not create new Lua state\n");
 		exit(EXIT_FAILURE);

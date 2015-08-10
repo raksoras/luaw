@@ -35,9 +35,6 @@ conn:close()
 
 local startReadingInternal = connMT.startReading
 local readInternal = connMT.read
---local peekInternal = connMT.peek
---local matchReadInternal = connMT.matchRead
---local searchReadInternal = connMT.searchRead
 local writeInternal = connMT.write
 
 connMT.startReading = function(self)
@@ -69,41 +66,6 @@ connMT.readMinLength = function(self, buff, readTimeout, minReadLen)
     return status, mesg
 end
 
---connMT.peek = function(self, peekLen, readTimeout) 
---    local status, err = self:read(peekLen, readTimeout or DEFAULT_READ_TIMEOUT)
---    if (not status) do
---        return status, err
---    end
---    return peekInternal(self, peekLen)
---end
-
---connMT.matchRead = function(self, matchStr, readTimeout) 
---    local status, err = self:read(#matchStr, readTimeout or DEFAULT_READ_TIMEOUT)
---    if (not status) do
---        return status, err
---    end
---    return matchReadInternal(self, peekLen)
---end
-
---connMT.searchRead = function(self, searchStr, readTimeout) 
---    if (status) do
---        status, match = matchReadInternal(self, peekLen)
---    end
---    return status, match
---end
-
---connMT.bufferedSearchRead = function(self, searchStr, readTimeout)
---    local buffer
---    local status, found, part = searchReadInternal(self, searchStr)
---    while ((status)and(not found)) do
---        buffer = safeAppend(buffer, part)
---        status, found, part = searchReadInternal(self)
---    end
---    buffer = safeAppend(buffer, part)
---    return status, found, buffer
---end
-
-
 connMT.write = function(self, wbuffers, writeTimeout)
     local status, nwritten = writeInternal(self, scheduler.tid(), #wbuffers, wbuffers, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
     if ((status)and(nwritten > 0)) then
@@ -129,7 +91,6 @@ local function connect(hostIP, hostName, port, connectTimeout)
 
     local connectTimeout = connectTimeout or DEFAULT_CONNECT_TIMEOUT
     local conn, mesg = connectInternal(hostIP, port, threadId, connectTimeout)
-
     -- initial connect_req succeeded, block for libuv callback
     assert(coroutine.yield(TS_BLOCKED_EVENT))
     return conn, mesg
