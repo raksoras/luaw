@@ -47,34 +47,8 @@ static uv_tcp_t server;
 static uv_loop_t* event_loop;
 static uv_signal_t shutdown_signal;
 
-static int service_http_fn_ref;
-static int start_thread_fn_ref;
+static int start_req_thread_fn_ref;
 static int run_ready_threads_fn_ref;
-
-#define LUA_LOAD_FILE_BUFF_SIZE 1024
-
-typedef struct {
-    FILE *file;                             /* file being read */
-    char buff[LUA_LOAD_FILE_BUFF_SIZE];     /* area for reading file */
-    char* epilogue;
-} lua_load_buffer_t;
-
-
-static const char* lua_file_reader(lua_State* L, void* data, size_t* size) {
-    lua_load_buffer_t *lb = (lua_load_buffer_t*)data;
-
-    if (lb->file == NULL) return NULL;
-
-    if (feof(lb->file)) {
-        fclose(lb->file);
-        lb->file = NULL;
-        *size = (lb->epilogue != NULL) ? strlen(lb->epilogue) : 0;
-        return lb->epilogue;
-    }
-
-    *size = fread(lb->buff, 1, sizeof(lb->buff), lb->file);  /* read block */
-    return lb->buff;
-}
 
 static void handle_shutdown_req(uv_signal_t* handle, int signum) {
     if (signum == SIGHUP) {
@@ -85,20 +59,6 @@ static void handle_shutdown_req(uv_signal_t* handle, int signum) {
 }
 
 void init_luaw_server(lua_State* L) {
-    lua_getglobal(L, "luaw_http_lib");
-    if (!lua_istable(L, -1)) {
-        fprintf(stderr, "Luaw HTTP library not initialized\n");
-        exit(EXIT_FAILURE);
-    }
-
-    lua_getfield(L, -1, "request_handler");
-    if (!lua_isfunction(L, -1)) {
-        fprintf(stderr, "Main HTTP request handler function (luaw_http_lib.request_handler) not set\n");
-        exit(EXIT_FAILURE);
-    }
-    service_http_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    lua_pop(L, 1);
-
     lua_getglobal(L, "luaw_scheduler");
     if (!lua_istable(L, -1)) {
         fprintf(stderr, "Luaw scheduler not initialized\n");
@@ -113,11 +73,11 @@ void init_luaw_server(lua_State* L) {
         exit(EXIT_FAILURE);
     }
 
-    lua_getfield(L, -1, "startSystemThread");
+    lua_getfield(L, -1, "startRequestThread");
     if (lua_isfunction(L, -1)) {
-        start_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        start_req_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     } else {
-        fprintf(stderr, "startSystemThread function not found in luaw scheduler\n");
+        fprintf(stderr, "startRequestThread function not found in luaw scheduler\n");
         exit(EXIT_FAILURE);
     }
 
@@ -159,10 +119,7 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
         return;
     }
 
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, start_thread_fn_ref);
-    assert(lua_isfunction(l_global, -1));
-
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, service_http_fn_ref);
+    lua_rawgeti(l_global, LUA_REGISTRYINDEX, start_req_thread_fn_ref);
     assert(lua_isfunction(l_global, -1));
 
     connection_t * conn = new_connection(l_global);
@@ -173,7 +130,7 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
         return;
     }
 
-    status = lua_pcall(l_global, 2, 2, 0);
+    status = lua_pcall(l_global, 1, 2, 0);
     if (status) {
         fprintf(stderr, "**** Error starting new client connect thread: %s (%d) ****\n", lua_tostring(l_global, -1), status);
     }
@@ -241,34 +198,11 @@ static int server_loop(lua_State *L) {
     return status;
 }
 
-static void run_lua_file(const char* filename, char* epilogue) {
-    lua_load_buffer_t lb;
-
-    lb.file = fopen(filename, "r");
-    if (lb.file == NULL) {
-        fprintf(stderr, "Could not open file %s for reading\n", filename);
-        exit(EXIT_FAILURE);
-    }
-    lb.epilogue = epilogue;
-
-    #ifdef COMPAT52_IS_LUAJIT
-        int status = lua_load(l_global, lua_file_reader, &lb, filename);
-    #else
-        int status = lua_load(l_global, lua_file_reader, &lb, filename, "t");
-    #endif
-
+static void run_lua_file(const char* filename) {
+    int status = luaL_dofile(l_global, filename);
     if (status != LUA_OK) {
-        fprintf(stderr, "Error while loading file: %s\n", filename);
+        fprintf(stderr, "Error while ruunning script: %s\n", filename);
         fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
-        exit(EXIT_FAILURE);
-    }
-
-    status = lua_pcall(l_global, 0, 0, 0);
-    if (status != LUA_OK) {
-        fprintf(stderr, "Error while executing file: %s\n", filename);
-        fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
-        fprintf(stderr, "\n\t* Try running luaw_server from directory that contains \"bin\" directory containing the binary \"luaw_server\"\n");
-        fprintf(stderr, "\t* For example: ./bin/luaw_server <server_config_file>\n\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -298,15 +232,11 @@ int main (int argc, char* argv[]) {
     luaopen_lfs(l_global);
     lua_gc(l_global, LUA_GCRESTART, 0);
 
-    /* load config file, mandatory */
     set_lua_path(l_global);
-    run_lua_file(argv[1], "\ninit = require(\"luaw_init\")\n");
-
-    /* run other lua on startup script passed on the command line, if any */
-    int i = 2;
-    for (; i < argc; i++) {
+    /* run lua on startup scripts passed on the command line */
+    for (int i = 1; i < argc; i++) {
         fprintf(stderr, "## Running %s \n", argv[i]);
-        run_lua_file(argv[i], NULL);
+        run_lua_file(argv[i]);
     }
 
     init_luaw_server(l_global);

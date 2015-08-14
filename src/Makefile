@@ -11,9 +11,9 @@ LIBS= ../$(UVLIB) -lpthread ../$(LUALIB) -lm $(SYSLIBS) $(MYLIBS)
 
 # Build artifacts
 LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_buffer.o luaw_http_parser.o luaw_server.o luaw_tcp.o luaw_timer.o lfs.o
-LUAW_BIN= luaw_server
-LUAW_CONF= server.cfg
-LUAW_SCRIPTS= luapack.lua luaw_init.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua \
+LUAW_BIN= luaw
+LUAW_START_SCRIPT= start_luaw.sh
+LUAW_SCRIPTS= luapack.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua \
 luaw_scheduler.lua luaw_webapp.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
 
 # How to install. If your install program does not support "-p", then
@@ -36,7 +36,6 @@ RMDIR= rm -rf
 #where to install
 INSTALL_BIN=$(INSTALL_ROOT)/bin
 INSTALL_LIB=$(INSTALL_ROOT)/lib
-INSTALL_CONF=$(INSTALL_ROOT)/conf
 INSTALL_LOGS=$(INSTALL_ROOT)/logs
 INSTALL_WEBAPP=$(INSTALL_ROOT)/webapps
 
@@ -50,12 +49,11 @@ $(LUAW_BIN): $(LUAW_OBJS)
 install: check_install_root
 	$(MKDIR) $(INSTALL_BIN)
 	$(MKDIR) $(INSTALL_LIB)
-	$(MKDIR) $(INSTALL_CONF)
 	$(MKDIR) $(INSTALL_LOGS)
 	$(MKDIR) $(INSTALL_WEBAPP)
 	$(INSTALL_EXEC) $(LUAW_BIN) $(INSTALL_BIN)
 	cd ../lib && $(INSTALL_DATA) $(LUAW_SCRIPTS) $(INSTALL_BIN)
-	cd ../conf && $(INSTALL_DATA) $(LUAW_CONF) $(INSTALL_CONF)
+	$(INSTALL_EXEC) ../sample/$(LUAW_START_SCRIPT) $(INSTALL_ROOT)
 
 install-sample: install
 	cd ../sample && cp -r * $(INSTALL_ROOT)

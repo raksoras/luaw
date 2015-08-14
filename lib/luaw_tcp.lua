@@ -23,6 +23,9 @@ SOFTWARE.
 local constants = require('luaw_constants')
 local scheduler = require('luaw_scheduler')
 
+-- Global reference for luaw_server.c to get hold of at init time
+luaw_scheduler = scheduler
+
 local TS_BLOCKED_EVENT = constants.TS_BLOCKED_EVENT
 local DEFAULT_CONNECT_TIMEOUT = constants.DEFAULT_CONNECT_TIMEOUT
 local DEFAULT_READ_TIMEOUT = constants.DEFAULT_READ_TIMEOUT

@@ -14,9 +14,9 @@ registerHandler {
     path = '/threads',
 
     handler = function(req, resp)
-        local t1 = scheduler.startUserThread(timerFn, 1, 2000)
-        local t2 = scheduler.startUserThread(timerFn, 2, 5000)
-        local t3 = scheduler.startUserThread(timerFn, 3, 7000)
+        local t1 = scheduler.startNewThread(timerFn, 1, 2000)
+        local t2 = scheduler.startNewThread(timerFn, 2, 5000)
+        local t3 = scheduler.startNewThread(timerFn, 3, 7000)
 
         print(t1:join())
         print(t3:join())
