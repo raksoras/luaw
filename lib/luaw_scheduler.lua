@@ -45,15 +45,24 @@ local runQueueHead = nil
 local runQueueTail = nil
 local currentRunningThreadCtx = nil
 local currentTime
+local requestHandler;
 
 
-scheduler.updateCurrentTime = function(ctime)
-    currentTime = ctime
-    logging.updateCurrentTime(currentTime)
+scheduler.setRequestHandler = function(fn)
+    assert(type(fn) == 'function', "request handler must be a valid function")
+    requestHandler = fn
 end
 
 scheduler.time = function()
     return currentTime
+end
+
+local function chronometer(step)
+    local timer = luaw_timer.newTimer()
+    while (true) do
+        timer:sleep(step)
+        currentTime = os.time()
+    end
 end
 
 -- returns current running thread's id
@@ -178,14 +187,15 @@ scheduler.resumeThreadId = function(tid, ...)
 end
 
 
-scheduler.startSystemThread = function(serviceFn, conn, ...)
+scheduler.startRequestThread = function(conn, ...)
+    assert(requestHandler, "request handler is not set")
     local threadCtx = newThread()
     threadCtx.state = TS_RUNNABLE
-    local isDone = resumeThread(threadCtx, serviceFn, conn, ...)
+    local isDone = resumeThread(threadCtx, requestHandler, conn, ...)
     return isDone, threadCtx.tid
 end
 
-scheduler.startUserThread = function(userThreadFn, ...)
+scheduler.startNewThread = function(userThreadFn, ...)
     local backgroundThreadCtx = newThread()
     backgroundThreadCtx.state = TS_RUNNABLE
     coroutine.resume(backgroundThreadCtx.thread, userThreadRunner, userThreadFn, ...)
@@ -232,5 +242,7 @@ scheduler.runReadyThreads = function(limit)
         runNextFromRunQueue()
     end
 end
+
+scheduler.startNewThread(chronometer, 200)
 
 return scheduler

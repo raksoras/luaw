@@ -21,8 +21,9 @@ SOFTWARE.
 ]]
 
 local constants = require('luaw_constants')
-local luaw_tcp_lib = require('luaw_tcp')
 local luaw_util_lib = require('luaw_utils')
+local luaw_tcp_lib = require('luaw_tcp')
+
 
 local TS_BLOCKED_EVENT = constants.TS_BLOCKED_EVENT
 local TS_RUNNABLE = constants.TS_RUNNABLE

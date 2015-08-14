@@ -38,6 +38,6 @@ local function chronometer(step)
 end
 
 luaw_scheduler.updateCurrentTime(os.time())
-luaw_scheduler.startUserThread(chronometer, 200)
+luaw_scheduler.startNewThread(chronometer, 200)
 
 luaw_webapp.init()

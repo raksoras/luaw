@@ -21,7 +21,11 @@ SOFTWARE.
 ]]
 
 local luaw_utils_lib = require("luaw_utils")
+local luaw_logging = require("luaw_logging")
+local luaw_timer = require("luaw_timer")
 local luaw_http_lib = require("luaw_http")
+local scheduler = require('luaw_scheduler')
+local luaw_lpack = require("luapack")
 
 local HTTP_METHODS = {
     GET = "GET",
@@ -451,7 +455,7 @@ local function init()
 end
 
 -- install REST HTTP app handler as a default request handler
-luaw_http_lib.request_handler = serviceHTTP
+scheduler.setRequestHandler(serviceHTTP)
 
 return {
     init = init,

@@ -1,3 +1,5 @@
+#!./bin/luaw_server
+
 luaw_server_config = {
     server_ip = "0.0.0.0",
     server_port = 7001,
@@ -20,4 +22,7 @@ luaw_log_config = {
 luaw_webapp_config = {
     base_dir = "./webapps"
 }
+
+webapp = require("luaw_webapp")
+webapp.init()
 
