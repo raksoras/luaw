@@ -22,6 +22,7 @@ SOFTWARE.
 
 local luaw_utils_lib = require("luaw_utils")
 local luaw_logging = require("luaw_logging")
+local luaw_tcp_lib = require('luaw_tcp')
 local luaw_timer = require("luaw_timer")
 local luaw_http_lib = require("luaw_http")
 local scheduler = require('luaw_scheduler')
@@ -286,11 +287,12 @@ local function registerResource(resource)
     route[method] = {handler = handlerFn}
 end
 
-local function serviceHTTP(conn)
-    conn:startReading()
+local function serviceHTTP(rawConn)
+    local conn = luaw_tcp_lib.wrapConnection(rawConn)
     local req = luaw_http_lib.newServerHttpRequest(conn)
     local resp = luaw_http_lib.newServerHttpResponse(conn)
-
+    conn:startReading()
+    
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do    
         req:reset()

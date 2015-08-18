@@ -24,8 +24,6 @@
 
 #define LUAW_TCP_H
 
-#define LUA_CONNECTION_META_TABLE "_luaw_connection_MT_"
-
 typedef struct connection_s connection_t;
 
 /* client connection's state: socket connection, coroutines servicing the connection
@@ -36,18 +34,16 @@ struct connection_s {
     /* read section */
     int lua_reader_tid;             /* ID of the reading coroutine */
     uv_timer_t read_timer;          /* for read timeout */
+    buff_t* read_buffer;            
 
     /* write section */
     int lua_writer_tid;             /* ID of the writing coroutine */
     uv_timer_t write_timer;         /* for write/connect timeout */
-    uv_write_t write_req;           /* write request */
+    uv_write_t write_req;           
 
     /* memory management */
-    int ref_count;                  /* reference count */
-    connection_t** lua_ref;         /* back reference to Lua's full userdata pointing to this conn */
-
-    /* read buffer */
-    buff_t* read_buffer;             /* buffer to read into */
+    bool mark_closed;              
+    int ref_count;                  
 };
 
 #define TO_CONN(h) (connection_t*)h->data
@@ -56,24 +52,20 @@ struct connection_s {
     (connection_t*)h->data;     \
     if(!h->data) return
 
-#define LUA_GET_CONN_OR_RETURN(L, i, c)                                     \
-    connection_t** cr = luaL_checkudata(L, i, LUA_CONNECTION_META_TABLE);   \
-    if (cr == NULL) return 0;                                               \
-    connection_t* c = *cr;                                                  \
+#define LUA_GET_CONN_OR_RETURN(L, i, c)         \
+    connection_t* c = lua_touserdata(L, i);     \
     if (c == NULL) return 0;
 
-#define LUA_GET_CONN_OR_ERROR(L, i, c)                                      \
-    connection_t** cr = luaL_checkudata(L, i, LUA_CONNECTION_META_TABLE);   \
-    if (cr == NULL) return error_to_lua(L, "Connection missing");           \
-    connection_t* c = *cr;                                                  \
-    if (c == NULL) return error_to_lua(L, "Connection closed");
+#define LUA_GET_CONN_OR_ERROR(L, i, c)                              \
+    connection_t* c = lua_touserdata(L, i);                         \
+    if (c == NULL) return error_to_lua(L, "Connection missing");    \
 
 #define TO_TIMER(h) (luaw_timer_t*)h->data
 
 
 
 /* TCP lib methods to be exported */
-extern connection_t* new_connection(lua_State* L);
+extern connection_t* new_connection();
 extern void close_connection(connection_t* conn, const int status);
 extern void luaw_init_tcp_lib (lua_State *L);
 

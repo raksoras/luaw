@@ -43,4 +43,14 @@ timerMT.sleep = function(timer, timeout)
     timer:wait()
 end
 
+local function chronometer(step)
+    local timer = luaw_timer_lib.newTimer()
+    while (true) do
+        timer:sleep(step)
+        scheduler.updateCurrentTime(os.time())
+    end
+end
+scheduler.updateCurrentTime(os.time())
+scheduler.startNewThread(chronometer, 200)
+
 return luaw_timer_lib

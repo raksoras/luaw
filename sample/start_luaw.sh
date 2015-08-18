@@ -1,4 +1,4 @@
-#!./bin/luaw_server
+#!./bin/luaw
 
 luaw_server_config = {
     server_ip = "0.0.0.0",

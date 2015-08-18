@@ -44,12 +44,9 @@ int resume_thread_fn_ref;   //Resume thread lua function
 
 
 void resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler) {
-    int tid = lua_tointeger(L, (0 - nargs));
-    if (tid) {
-        int rc = lua_pcall(L, nargs, nresults, errHandler);
-        if (rc != 0) {
-            fprintf(stderr, "******** Error resuming Lua thread# %d: %s (%d) *********\n", tid, lua_tostring(L, -1), rc);
-        }
+    int rc = lua_pcall(L, nargs, nresults, errHandler);
+    if (rc != 0) {
+        fprintf(stderr, "******** Error resuming Lua thread: %s (%d) *********\n", lua_tostring(L, -1), rc);
     }
 }
 

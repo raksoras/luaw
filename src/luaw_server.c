@@ -122,7 +122,13 @@ LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
     lua_rawgeti(l_global, LUA_REGISTRYINDEX, start_req_thread_fn_ref);
     assert(lua_isfunction(l_global, -1));
 
-    connection_t * conn = new_connection(l_global);
+    connection_t * conn = new_connection();
+    if (conn == NULL) {
+        raise_lua_error(l_global, "Could not allocate memory for client connection");
+        return;
+    }
+    lua_pushlightuserdata(l_global, conn);
+    
     status = uv_accept(server, (uv_stream_t*)&conn->handle);
     if (status) {
         close_connection(conn, status);
@@ -220,7 +226,7 @@ int main (int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-  l_global = luaL_newstate();
+    l_global = luaL_newstate();
 	if (!l_global) {
 		fprintf(stderr, "Could not create new Lua state\n");
 		exit(EXIT_FAILURE);
