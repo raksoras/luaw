@@ -57,12 +57,8 @@ scheduler.time = function()
     return currentTime
 end
 
-local function chronometer(step)
-    local timer = luaw_timer.newTimer()
-    while (true) do
-        timer:sleep(step)
-        currentTime = os.time()
-    end
+scheduler.updateCurrentTime = function(ctime)
+    currentTime = ctime
 end
 
 -- returns current running thread's id
@@ -141,7 +137,7 @@ local function resumeThread(threadCtx, ...)
 
     context = threadCtx.requestCtx  -- TLS, per thread context
     local status, state, retVal = coroutine.resume(t, ...)
---    print(status, state, retVal)
+    print(status, state, retVal)
     context = nil -- reset TLS context
 
     if not status then
@@ -242,7 +238,5 @@ scheduler.runReadyThreads = function(limit)
         runNextFromRunQueue()
     end
 end
-
-scheduler.startNewThread(chronometer, 200)
 
 return scheduler

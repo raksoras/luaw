@@ -39,25 +39,14 @@
 #include "luaw_tcp.h"
 
 
-connection_t* new_connection(lua_State* L) {
+connection_t* new_connection() {
     connection_t* conn = (connection_t*)calloc(1, sizeof(connection_t));
     if (conn == NULL) {
-        raise_lua_error(L, "Could not allocate memory for client connection");
         return NULL;
     }
 
-    connection_t** lua_ref = lua_newuserdata(L, sizeof(connection_t*));
-    if (lua_ref == NULL) {
-        free(conn);
-        raise_lua_error(L, "Could not allocate memory for client connection Lua reference");
-        return NULL;
-    }
-
-    /* link C side connection reference and Lua's full userdata that represents it to each other */
-    luaL_setmetatable(L, LUA_CONNECTION_META_TABLE);
-    *lua_ref = conn;
+    /* To account for reference from Lua to this connection, decreased in close_connection_lua() */
     INCR_REF_COUNT(conn)
-    conn->lua_ref = lua_ref;
 
     /* init libuv artifacts */
     uv_tcp_init(uv_default_loop(), &conn->handle);
@@ -78,7 +67,11 @@ connection_t* new_connection(lua_State* L) {
 }
 
 LUA_LIB_METHOD static int new_connection_lua(lua_State* L) {
-    new_connection(L);
+    connection_t* conn = new_connection();
+    if (conn == NULL) {
+        return raise_lua_error(L, "Could not allocate memory for client connection");
+    }
+    lua_pushlightuserdata(L, conn);
     return 1;
 }
 
@@ -95,20 +88,8 @@ static void free_tcp_handle(uv_handle_t* handle) {
 }
 
 void close_connection(connection_t* conn, const int status) {
-    /* conn->lua_ref == NULL also acts as a flag to mark that this conn has been closed */
-    if ((conn == NULL)||(conn->lua_ref == NULL)) return;
-
-    *(conn->lua_ref) = NULL;  //delink from Lua's userdata
-    conn->lua_ref = NULL;
-    DECR_REF_COUNT(conn);
-
-    uv_timer_stop(&conn->read_timer);
-    close_if_active((uv_handle_t*)&conn->read_timer, (uv_close_cb)free_timer);
-
-    uv_timer_stop(&conn->write_timer);
-    close_if_active((uv_handle_t*)&conn->write_timer, (uv_close_cb)free_timer);
-
-    close_if_active((uv_handle_t*)&conn->handle, (uv_close_cb)free_tcp_handle);
+    if ((conn == NULL)||(conn->mark_closed)) return;
+    conn->mark_closed = true;
 
     /* unblock reader thread */
     if (conn->lua_reader_tid) {
@@ -143,6 +124,14 @@ void close_connection(connection_t* conn, const int status) {
         conn->lua_writer_tid = 0;
         resume_lua_thread(l_global, 3, 2, 0);
     }
+    
+    uv_timer_stop(&conn->read_timer);
+    close_if_active((uv_handle_t*)&conn->read_timer, (uv_close_cb)free_timer);
+
+    uv_timer_stop(&conn->write_timer);
+    close_if_active((uv_handle_t*)&conn->write_timer, (uv_close_cb)free_timer);
+
+    close_if_active((uv_handle_t*)&conn->handle, (uv_close_cb)free_tcp_handle);    
 }
 
 LIBUV_CALLBACK static void on_conn_timeout(uv_timer_t* timer) {
@@ -164,26 +153,10 @@ static void stop_timer(uv_timer_t* timer) {
     }
 }
 
-LUA_OBJ_METHOD static int close_connection_lua(lua_State* l_thread) {
+LUA_LIB_METHOD static int close_connection_lua(lua_State* l_thread) {
     LUA_GET_CONN_OR_RETURN(l_thread, 1, conn);
-
-    /* being called from lua, no reason to resume thread */
-    conn->lua_reader_tid = 0;
-    conn->lua_writer_tid = 0;
+    GC_REF(conn)    //decrement Lua's reference
     close_connection(conn, UV_EOF);
-    return 0;
-}
-
-LUA_OBJ_METHOD static int connection_gc(lua_State *L) {
-    LUA_GET_CONN_OR_RETURN(L, 1, conn);
-
-    /* if we reached here, there is a connection that has not been closed */
-    fprintf(stderr, "Luaw closed unclosed connection\n");
-
-    /* being called from lua, no reason to resume thread */
-    conn->lua_reader_tid = 0;
-    conn->lua_writer_tid = 0;
-    close_connection(conn, UV_ECANCELED);
     return 0;
 }
 
@@ -243,9 +216,12 @@ LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t
 * Success:  status(true), nil = conn:start_reading()
 * Failure:  status(false), error message = conn:start_reading()
 */
-LUA_OBJ_METHOD static int start_reading(lua_State *l_thread) {
+LUA_LIB_METHOD static int start_reading(lua_State *l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
-
+    if (conn->mark_closed) {
+        return raise_lua_error(L, "startReading() called on an already closed connection.");
+    }
+    
     conn->lua_reader_tid = 0;
     int err_code = uv_read_start((uv_stream_t*)&conn->handle, on_alloc, on_read);
     if (err_code) {
@@ -259,8 +235,12 @@ LUA_OBJ_METHOD static int start_reading(lua_State *l_thread) {
     return 1;
 }
 
-LUA_OBJ_METHOD static int read_check(lua_State* l_thread) {
+LUA_LIB_METHOD static int read_check(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
+    if (conn->mark_closed) {
+        return raise_lua_error(L, "read() called on an already closed connection.");
+    }
+    
     if (!uv_is_active((uv_handle_t*)&conn->handle)) {
         close_connection(conn, UV_EAI_BADFLAGS);
         return error_to_lua(l_thread, "read() called on conn that is not registered to receive read events");
@@ -295,13 +275,15 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
         if (status) {
             close_connection(conn, status);
         } else {
-            stop_timer(&conn->write_timer); //clear write timeout if any
-            lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
-            lua_pushinteger(l_global, conn->lua_writer_tid);
-            conn->lua_writer_tid = 0;
-            lua_pushboolean(l_global, 1);
-            lua_pushinteger(l_global, 1);
-            resume_lua_thread(l_global, 3, 2, 0);
+            if (conn->lua_writer_tid != 0) {
+                stop_timer(&conn->write_timer); //clear write timeout if any
+                lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
+                lua_pushinteger(l_global, conn->lua_writer_tid);
+                conn->lua_writer_tid = 0;
+                lua_pushboolean(l_global, 1);
+                lua_pushinteger(l_global, 1);
+                resume_lua_thread(l_global, 3, 2, 0);
+            }
         }
         /* Unlike libuv handles, libuv requests do not support uv_close(). Therefore we increment
         reference count every time request starts and decrement it as soon as it completes */
@@ -313,8 +295,11 @@ LIBUV_API static void on_write(uv_write_t* req, int status) {
 Success: status(true), nwritten
 Failure: status(false), error message
 */
-LUA_OBJ_METHOD static int write_buffer(lua_State* l_thread) {
+LUA_LIB_METHOD static int write_buffer(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
+    if (conn->mark_closed) {
+        return raise_lua_error(L, "write() called on an already closed connection.");
+    }
 
     int lua_writer_tid = lua_tointeger(l_thread, 2);
     if (lua_writer_tid == 0) {
@@ -369,19 +354,21 @@ LIBUV_CALLBACK static void on_client_connect(uv_connect_t* connect_req, int stat
     stop_timer(&conn->write_timer); //clear connect timeout if any
     free(connect_req);
 
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
-    lua_pushinteger(l_global, conn->lua_writer_tid);
+    if (conn->lua_writer_tid != 0) {
+        lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
+        lua_pushinteger(l_global, conn->lua_writer_tid);
 
-    if (status) {
-        close_connection(conn, status);
-        lua_pushboolean(l_global, 0);
-        lua_pushstring(l_global, uv_strerror(status));
-    } else {
-        lua_pushboolean(l_global, 1); //status to be returned
-        lua_pushnil(l_global);
+        if (status) {
+            close_connection(conn, status);
+            lua_pushboolean(l_global, 0);
+            lua_pushstring(l_global, uv_strerror(status));
+        } else {
+            lua_pushboolean(l_global, 1); //status to be returned
+            lua_pushnil(l_global);
+        }
+
+        resume_lua_thread(l_global, 3, 2, 0);
     }
-
-    resume_lua_thread(l_global, 3, 2, 0);
 }
 
 /* lua call spec: luaw_lib.connect(ip4_addr, port, tid, connectTimeout)
@@ -408,7 +395,11 @@ LUA_LIB_METHOD static int client_connect(lua_State* l_thread) {
         return error_to_lua(l_thread, "Invalid ip address %s and port %d combination specified in client_connect", ip4, port);
     }
 
-    connection_t* conn = new_connection(l_thread);
+    connection_t* conn = new_connection();
+    if (conn == NULL) {
+        return raise_lua_error(l_global, "Could not allocate memory for client connection");
+    }
+    lua_pushlightuserdata(l_thread, conn);
 
     uv_connect_t* connect_req = (uv_connect_t*)malloc(sizeof(uv_connect_t));
     if (connect_req == NULL) {
@@ -433,25 +424,27 @@ LIBUV_CALLBACK static void on_resolved(uv_getaddrinfo_t *resolver, int status, s
     int lua_tid = *((int *)resolver->data);
     free(resolver->data);
     free(resolver);
+    
+    if (lua_tid != 0) {
+        char ip_str[17] = {'\0'};
+        if ((status == 0)&&(res != NULL)) {
+            struct sockaddr_in addr = *(struct sockaddr_in*) res->ai_addr;
+            status = uv_ip4_name(&addr, (char*)ip_str, sizeof(ip_str));
+            uv_freeaddrinfo(res);
+        }
 
-    char ip_str[17] = {'\0'};
-    if ((status == 0)&&(res != NULL)) {
-        struct sockaddr_in addr = *(struct sockaddr_in*) res->ai_addr;
-        status = uv_ip4_name(&addr, (char*)ip_str, sizeof(ip_str));
-        uv_freeaddrinfo(res);
+        lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
+        lua_pushinteger(l_global, lua_tid);
+
+        if ((status)||(res == NULL)) {
+            lua_pushboolean(l_global, 0);
+            lua_pushfstring(l_global, "DNS resolution failed: %s", uv_strerror(status));
+        } else {
+            lua_pushboolean(l_global, 1);       //status to be returned
+            lua_pushstring(l_global, ip_str);   //IP address string
+        }
+        resume_lua_thread(l_global, 3, 2, 0);
     }
-
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, resume_thread_fn_ref);
-    lua_pushinteger(l_global, lua_tid);
-
-    if ((status)||(res == NULL)) {
-        lua_pushboolean(l_global, 0);
-        lua_pushfstring(l_global, "DNS resolution failed: %s", uv_strerror(status));
-    } else {
-        lua_pushboolean(l_global, 1);       //status to be returned
-        lua_pushstring(l_global, ip_str);   //IP address string
-    }
-    resume_lua_thread(l_global, 3, 2, 0);
 }
 
 LUA_LIB_METHOD static int dns_resolve(lua_State* l_thread) {
@@ -494,15 +487,6 @@ LUA_LIB_METHOD static int dns_resolve(lua_State* l_thread) {
 }
 
 
-static const struct luaL_Reg luaw_connection_methods[] = {
-    {"startReading", start_reading},    
-    {"read", read_check},
-    {"write", write_buffer},
-    {"close", close_connection_lua},
-    {"__gc", connection_gc},
-    {NULL, NULL}  /* sentinel */
-};
-
 static const struct luaL_Reg luaw_buffer_methods[] = {
     {"free", free_buffer},    
     {"capacity", buffer_capacity},
@@ -520,6 +504,10 @@ static const struct luaL_Reg luaw_buffer_methods[] = {
 
 static const struct luaL_Reg luaw_tcp_lib[] = {
     {"newConnection", new_connection_lua},
+    {"startReading", start_reading},    
+    {"read", read_check},
+    {"write", write_buffer},
+    {"close", close_connection_lua},
     {"newBuffer", new_buffer},
     {"connect", client_connect},
     {"resolveDNS", dns_resolve},
@@ -528,7 +516,6 @@ static const struct luaL_Reg luaw_tcp_lib[] = {
 
 
 void luaw_init_tcp_lib (lua_State *L) {
-    make_metatable(L, LUA_CONNECTION_META_TABLE, luaw_connection_methods);
     make_metatable(L, LUA_BUFFER_META_TABLE, luaw_buffer_methods);
     luaL_newlib(L, luaw_tcp_lib);
     lua_setglobal(L, "luaw_tcp_lib");

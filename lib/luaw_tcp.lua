@@ -32,22 +32,18 @@ local DEFAULT_READ_TIMEOUT = constants.DEFAULT_READ_TIMEOUT
 local DEFAULT_WRITE_TIMEOUT = constants.DEFAULT_WRITE_TIMEOUT
 local CONN_BUFFER_SIZE = constants.CONN_BUFFER_SIZE
 
-local conn = luaw_tcp_lib.newConnection();
-local connMT = getmetatable(conn)
-conn:close()
 
-local startReadingInternal = connMT.startReading
-local readInternal = connMT.read
-local writeInternal = connMT.write
+local rawStartReading = luaw_tcp_lib.startReading
+local rawRead = luaw_tcp_lib.read
+local rawWrite = luaw_tcp_lib.write
+local rawClose = luaw_tcp_lib.close
+local resolveDNS = luaw_tcp_lib.resolveDNS
+local rawConnect = luaw_tcp_lib.connect
 
-connMT.startReading = function(self)
-    local status, mesg = startReadingInternal(self)
-    assert(status, mesg)
-end
 
 function asyncRead(self, buff, readTimeout)
     readTimeout = readTimeout or DEFAULT_READ_TIMEOUT
-    local status, mesg = readInternal(self, buff, scheduler.tid(), readTimeout)
+    local status, mesg = rawRead(self.luaw_raw_conn, buff, scheduler.tid(), readTimeout)
     if (status) then
         -- wait for libuv on_read callback
         status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
@@ -55,37 +51,76 @@ function asyncRead(self, buff, readTimeout)
     return status, mesg
 end
 
-connMT.read = asyncRead
-
-connMT.readMinLength = function(self, buff, readTimeout, minReadLen)
-    if (buff:capacity() < minReadLen) then
-        return false, "Buffer capacity is less than minimum read length requested"
+function close_connection(conn)
+    local rawConn = conn.luaw_raw_conn
+    if (rawConn) then
+        rawClose(rawConn)
+        conn.luaw_raw_conn = nil
     end
-
-    local status, mesg = true
-    while ((buff:length() < minReadLen)and(status)) do
-        status, mesg = asyncRead(self, buff, readTimeout)
-    end
-    return status, mesg
 end
 
-connMT.write = function(self, wbuffers, writeTimeout)
-    local status, nwritten = writeInternal(self, scheduler.tid(), #wbuffers, wbuffers, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
-    if ((status)and(nwritten > 0)) then
-        -- there is something to write, yield for libuv callback
-        status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
-    end
-    assert(status, nwritten)
-    return nwritten
-end
+local connMT = {
+    startReading = function(self)
+        local status, mesg = rawStartReading(self.luaw_raw_conn)
+        assert(status, mesg)
+    end,
+    
+    read = asyncRead,
 
-local connectInternal = luaw_tcp_lib.connect
+    readMinLength = function(self, buff, readTimeout, minReadLen)
+        if (buff:capacity() < minReadLen) then
+            return false, "Buffer capacity is less than minimum read length requested"
+        end
+
+        local status, mesg = true
+        while ((buff:length() < minReadLen)and(status)) do
+            status, mesg = asyncRead(self, buff, readTimeout)
+        end
+        return status, mesg
+    end,
+
+    write = function(self, wbuffers, writeTimeout)
+        local status, nwritten = rawWrite(self.luaw_raw_conn, scheduler.tid(), #wbuffers, wbuffers, writeTimeout  or DEFAULT_WRITE_TIMEOUT)
+        if ((status)and(nwritten > 0)) then
+            -- there is something to write, yield for libuv callback
+            status, nwritten = coroutine.yield(TS_BLOCKED_EVENT)
+        end
+        assert(status, nwritten)
+        return nwritten
+    end,
+
+    close = function(self)
+        local rawConn = self.luaw_raw_conn
+        if (rawConn) then
+            rawClose(rawConn)
+            self.luaw_raw_conn = nil
+        end
+    end,
+
+    __gc = function(self)
+        local rawConn = self.luaw_raw_conn
+        if (rawConn) then
+            print("Luaw cleaned up unclosed connection")
+            rawClose(rawConn)
+            self.luaw_raw_conn = nil
+        end
+    end
+}
+
+connMT.__index = connMT
+
+function wrapConnection(rawConn)
+    local conn = { luaw_raw_conn = rawConn }
+    setmetatable(conn, connMT)
+    return conn
+end
+luaw_tcp_lib.wrapConnection = wrapConnection
 
 local function connect(hostIP, hostName, port, connectTimeout)
     assert((hostName or hostIP), "Either hostName or hostIP must be specified in request")
     local threadId = scheduler.tid()
     if not hostIP then
-        local status, mesg = luaw_tcp_lib.resolveDNS(hostName, threadId)
+        local status, mesg = resolveDNS(hostName, threadId)
         assert(status, mesg)
         status, mesg = coroutine.yield(TS_BLOCKED_EVENT)
         assert(status, mesg)
@@ -93,12 +128,13 @@ local function connect(hostIP, hostName, port, connectTimeout)
     end
 
     local connectTimeout = connectTimeout or DEFAULT_CONNECT_TIMEOUT
-    local conn, mesg = connectInternal(hostIP, port, threadId, connectTimeout)
+    local rawConn, mesg = rawConnect(hostIP, port, threadId, connectTimeout)
     -- initial connect_req succeeded, block for libuv callback
     assert(coroutine.yield(TS_BLOCKED_EVENT))
+    
+    local conn = wrapConnection(rawConn)
     return conn, mesg
 end
-
 luaw_tcp_lib.connect = connect
 
 return luaw_tcp_lib
