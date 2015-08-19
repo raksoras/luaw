@@ -829,8 +829,8 @@ local function newClientHttpResponse(conn)
 end
 
 local function connect(req)
-    local conn = assert(luaw_tcp_lib.connect(req.hostIP, req.hostName, req.port, req.connectTimeout))
-    return conn
+    local rawConn = assert(luaw_tcp_lib.connect(req.hostIP, req.hostName, req.port, req.connectTimeout))
+    return luaw_tcp_lib.wrapConnection(rawConn)
 end
 
 local function connectReq(req)
