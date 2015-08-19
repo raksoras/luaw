@@ -219,7 +219,7 @@ LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t
 LUA_LIB_METHOD static int start_reading(lua_State *l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
     if (conn->mark_closed) {
-        return raise_lua_error(L, "startReading() called on an already closed connection.");
+        return raise_lua_error(l_thread, "startReading() called on an already closed connection.");
     }
     
     conn->lua_reader_tid = 0;
@@ -238,7 +238,7 @@ LUA_LIB_METHOD static int start_reading(lua_State *l_thread) {
 LUA_LIB_METHOD static int read_check(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
     if (conn->mark_closed) {
-        return raise_lua_error(L, "read() called on an already closed connection.");
+        return raise_lua_error(l_thread, "read() called on an already closed connection.");
     }
     
     if (!uv_is_active((uv_handle_t*)&conn->handle)) {
@@ -298,7 +298,7 @@ Failure: status(false), error message
 LUA_LIB_METHOD static int write_buffer(lua_State* l_thread) {
     LUA_GET_CONN_OR_ERROR(l_thread, 1, conn);
     if (conn->mark_closed) {
-        return raise_lua_error(L, "write() called on an already closed connection.");
+        return raise_lua_error(l_thread, "write() called on an already closed connection.");
     }
 
     int lua_writer_tid = lua_tointeger(l_thread, 2);
