@@ -2,7 +2,7 @@ registerHandler {
     method = 'GET',
     path = 'showform',
 
-	handler = function(req, resp, pathParams)
+	handler = function(httpConn)
 	    resp:appendBody [[
             <!DOCTYPE html>
             <html lang="en">

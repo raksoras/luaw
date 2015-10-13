@@ -37,21 +37,15 @@ local END_OF_THREAD = constants.END_OF_THREAD
 local UPDATE_TIME_COUNTER_LIMIT = 10
 
 -- scheduler state
-local threadRegistry = ds_lib.newRegistry(luaw_server_config.thread_pool_size or 1024)
-local threadPool = ds_lib.newRingBuffer(luaw_server_config.thread_pool_size or 1024)
-local timesReuseThread = luaw_server_config.thread_reuse_limit or 1024
+local threadRegistry = ds_lib.newRegistry(luaw_server_config and luaw_server_config.thread_pool_size or 1024)
+local threadPool = ds_lib.newStack(luaw_server_config and luaw_server_config.thread_pool_size or 1024)
+local timesReuseThread = luaw_server_config and luaw_server_config.thread_reuse_limit or 1024
 local runQueueLen = 0
 local runQueueHead = nil
 local runQueueTail = nil
 local currentRunningThreadCtx = nil
 local currentTime
 local requestHandler;
-
-
-scheduler.setRequestHandler = function(fn)
-    assert(type(fn) == 'function', "request handler must be a valid function")
-    requestHandler = fn
-end
 
 scheduler.time = function()
     return currentTime
@@ -109,7 +103,7 @@ local function join(threadCtx)
 end
 
 local function newThread()
-    local t = threadPool:take()
+    local t = threadPool:pop()
     if not t then
         t = coroutine.create(threadRunLoop)
     end
@@ -137,10 +131,10 @@ local function resumeThread(threadCtx, ...)
 
     context = threadCtx.requestCtx  -- TLS, per thread context
     local status, state, retVal = coroutine.resume(t, ...)
---    print(status, state, retVal)
     context = nil -- reset TLS context
 
     if not status then
+        print("scheduler caught error", state, retVal, debug.traceback("=>", 4))
         -- thread ran into error
         state = END_OF_THREAD
         -- thread has blown its stack so let it get garbage collected
@@ -153,7 +147,7 @@ local function resumeThread(threadCtx, ...)
         threadCtx.requestCtx = nil
         if ((state == END_OF_CALL) and (t)) then
             -- thread is still alive, return it to free pool if possible
-            threadPool:offer(t)
+            threadPool:push(t)
         end
         
         --unblock joined thread, if any
@@ -183,8 +177,8 @@ scheduler.resumeThreadId = function(tid, ...)
 end
 
 
-scheduler.startRequestThread = function(conn, ...)
-    assert(requestHandler, "request handler is not set")
+scheduler.startRequestThread = function(requestHandler, conn, ...)
+    assert(requestHandler, "request handler missing")
     local threadCtx = newThread()
     threadCtx.state = TS_RUNNABLE
     local isDone = resumeThread(threadCtx, requestHandler, conn, ...)

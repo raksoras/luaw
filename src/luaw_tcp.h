@@ -24,6 +24,15 @@
 
 #define LUAW_TCP_H
 
+typedef struct tcp_listener_s tcp_listener_t;
+
+struct tcp_listener_s {
+    uv_tcp_t listen_sock;
+    int port;
+    int handler_fn_ref;
+    tcp_listener_t* next;
+};
+
 typedef struct connection_s connection_t;
 
 /* client connection's state: socket connection, coroutines servicing the connection
@@ -67,6 +76,8 @@ struct connection_s {
 /* TCP lib methods to be exported */
 extern connection_t* new_connection();
 extern void close_connection(connection_t* conn, const int status);
+extern int start_listeners();
+extern void close_listeners();
 extern void luaw_init_tcp_lib (lua_State *L);
 
 #endif

@@ -24,7 +24,7 @@ local module = {}
 
 --
 -- Registry
----
+--
 
 -- reg[0] stores head of the free list
 local function ref(reg, obj)
@@ -80,15 +80,6 @@ local function offer(rb, obj)
     return false;
 end
 
-local function offerWithWait(rb, obj)
-    local added = offer(rb, obj)
-    while not added do
-        coroutine.yield()
-        added = offer(rb, obj)
-    end
-    return added
-end
-
 local function take(rb)
     local size = rb.size
     local filled = rb.filled
@@ -108,15 +99,6 @@ local function take(rb)
     return obj
 end
 
-local function takeWithWait(rb)
-    local obj = take(rb)
-    while not obj do
-        coroutine.yield()
-        obj = take(rb)
-    end
-    return obj
-end
-
 local function offerWithOverwrite(rb, obj)
     local added = offer(rb, obj)
     if added then return true end
@@ -126,7 +108,6 @@ local function offerWithOverwrite(rb, obj)
     offer(rb, obj)
     return false, overwrittenObj
 end
-
 
 function module.newRingBuffer(size)
     local rb = {}
@@ -150,15 +131,40 @@ function module.newOverwrittingRingBuffer(size)
     return rb
 end
 
-function module.newBlockingRingBuffer(size)
-    local rb = {}
-    rb.reader = 1
-    rb.writer = 1
-    rb.filled = 0
-    rb.size = size
-    rb.offer = offerWithWait
-    rb.take = takeWithWait
-    return rb
+--
+-- Stack
+--
+
+local function push(stk, obj)
+    local top = stk.top
+    if (top < stk.limit) then
+        top = top+1
+        stk[top] = obj
+        stk.top = top
+        return true;
+    end
+    return false;
 end
+
+local function pop(stk)
+    local obj = nil
+    local top = stk.top
+    if (top > 0) then
+        obj = stk[top]
+        stk[top] = nil
+        stk.top = top -1
+    end
+    return obj
+end
+
+function module.newStack(size)
+    local stk = {}
+    stk.limit = size
+    stk.top = 0
+    stk.push = push
+    stk.pop = pop
+    return stk
+end
+
 
 return module

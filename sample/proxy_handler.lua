@@ -1,4 +1,6 @@
 local http_lib = require('luaw_http')
+local tcp_lib = require("luaw_tcp")
+local scheduler = require("luaw_scheduler")
 --[[
     Luaw allows you to replace it's default MVC/REST request handler with your own custom HTTP
 request handler implementation. To override the default HTTP request handler just set Luaw object's
@@ -8,61 +10,58 @@ The function is called on its own separate Luaw coroutine for each HTTP request 
 about multithreaded access to shared state inside the function.
 ]]
 
-http_lib.request_handler =  function(conn)
-    conn:startReading()
+local function request_handler(conn)
+    -- read client request
+    conn:readComplete()
+    
+    local reqHeaders = conn.requestHeaders
+    local beHost =  reqHeaders['backend-host']
+    local beURL = reqHeaders['backend-url']
 
+    if (beHost and beURL) then
+        -- proxy client request to backend server
+        local backendConn = assert(http_lib.connectByHostName(beHost, 80))
+        backendConn.url = beURL
+        backendConn.method = 'GET'
+        backendConn.requestHeaders['Host'] = beHost
+        backendConn:GET()
+
+        -- proxy backend server's response back to the client
+        conn:setStatus(backendConn.status)
+        conn:appendBody(backendConn:getBody())
+        local beHeaders = backendConn.responseHeaders
+        for k,v in pairs(beHeaders) do
+            if ((k ~= 'Transfer-Encoding')and(k ~= 'Content-Length')) then
+                conn:addHeader(k,v)
+            end
+        end
+        backendConn:close()
+    else
+        conn:setStatus(400)
+        conn:appendBody("Request must contain headers backend-host and backend-url\n")
+    end
+
+    conn:flush()
+
+    if (conn:shouldCloseConnection()) then
+        conn:close()
+        error("Connection reset by peer")
+    end
+    
+    --free bufffers
+    conn:free()
+end
+
+function proxy(rawConn)
+    tcp_lib.startReading(rawConn)
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
-    while true do
-        local req = http_lib.newServerHttpRequest(conn)
-        local resp = http_lib.newServerHttpResponse(conn)
-
-        -- read and parse full request
-        req:read()
-        if (req.EOF) then
-            conn:close()
-            return "connection reset by peer"
-        end
-
-        local reqHeaders = req.headers
-        local beHost =  reqHeaders['backend-host']
-        local beURL = reqHeaders['backend-url']
-
-        if (beHost and beURL) then
-           local backendReq = http_lib.newClientHttpRequest()
-           backendReq.hostName = beHost
-           backendReq.url = beURL
-           backendReq.method = 'GET'
-           backendReq.headers = { Host = beHost }
-
-           local status, backendResp = pcall(backendReq.execute, backendReq)
-           if (status) then
-               resp:setStatus(backendResp.status)
-               resp:appendBody(backendResp.body)
-               local beHeaders = backendResp.headers
-               for k,v in pairs(beHeaders) do
-                   if ((k ~= 'Transfer-Encoding')and(k ~= 'Content-Length')) then
-                       resp:addHeader(k,v)
-                   end
-               end
-               backendResp:close()
-            else
-               resp:setStatus(500)
-               resp:appendBody("connection to backend server failed")
-           end
-        else
-            resp:setStatus(400)
-            resp:appendBody("Request must contain headers backend-host and backend-url\n")
-        end
-
-        local status, mesg = pcall(resp.flush, resp)
+    while true do    
+        local conn = tcp_lib.wrapConnection(rawConn)
+        http_lib.addHttpServerMethods(conn)
+        local status, mesg = pcall(request_handler, conn)
         if (not status) then
             conn:close()
-            return error(mesg)
-        end
-
-        if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then
-            conn:close()
-            return "connection reset by peer"
-        end
+            error(mesg)
+        end    
     end
 end

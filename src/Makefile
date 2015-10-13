@@ -3,7 +3,7 @@
 
 CC?= gcc
 CFLAGS?= -O2 -g -Wall
-CFLAGS+= $(SYSCFLAGS) $(MYCFLAGS) -I../$(UVDIR)/include -I../$(LUADIR)/src
+CFLAGS+= $(SYSCFLAGS) $(MYCFLAGS) -I../$(UVDIR)/include -I../$(LUADIR)/src -I/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.11.sdk/usr/include 
 LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
 LIBS= ../$(UVLIB) -lpthread ../$(LUALIB) -lm $(SYSLIBS) $(MYLIBS)
 

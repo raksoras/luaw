@@ -39,8 +39,9 @@
 #include "lua_lpack.h"
 
 /* globals */
-lua_State* l_global = NULL; //main global Lua state that spawns all other coroutines
-int resume_thread_fn_ref;   //Resume thread lua function
+lua_State* l_global = NULL;  //main global Lua state that spawns all other coroutines
+int start_req_thread_fn_ref = -1; //Start new request thread function
+int resume_thread_fn_ref = -1;    //Resume thread lua function
 
 
 void resume_lua_thread(lua_State* L, int nargs, int nresults, int errHandler) {

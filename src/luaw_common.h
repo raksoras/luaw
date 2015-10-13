@@ -39,6 +39,8 @@ bool;
 
 #define Q(x) #x
 #define QUOTE(x) Q(x)
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y)) 
 
 #define INCR_REF_COUNT(s) if (s != NULL) s->ref_count++;
 
@@ -62,6 +64,7 @@ bool;
 /* global state */
 extern lua_State* l_global;
 extern int resume_thread_fn_ref;
+extern int start_req_thread_fn_ref;
 
 extern int error_to_lua(lua_State* L, const char* fmt, ...);
 extern int raise_lua_error (lua_State *L, const char *fmt, ...);

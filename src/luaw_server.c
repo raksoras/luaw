@@ -41,14 +41,9 @@
 #include "luaw_tcp.h"
 #include "lfs.h"
 
-static char* server_ip = "0.0.0.0";
-static int server_port = 80;
-static uv_tcp_t server;
 static uv_loop_t* event_loop;
 static uv_signal_t shutdown_signal;
-
-static int start_req_thread_fn_ref;
-static int run_ready_threads_fn_ref;
+static int run_ready_threads_fn_ref = -1;
 
 static void handle_shutdown_req(uv_signal_t* handle, int signum) {
     if (signum == SIGHUP) {
@@ -58,6 +53,15 @@ static void handle_shutdown_req(uv_signal_t* handle, int signum) {
     }
 }
 
+int register_function(lua_State* L, const char* fn_name) {
+    lua_getfield(L, -1, fn_name);
+    if (!lua_isfunction(L, -1)) {
+        fprintf(stderr, "%s function not found in luaw scheduler\n", fn_name);
+        exit(EXIT_FAILURE);
+    }
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
 void init_luaw_server(lua_State* L) {
     lua_getglobal(L, "luaw_scheduler");
     if (!lua_istable(L, -1)) {
@@ -65,109 +69,14 @@ void init_luaw_server(lua_State* L) {
         exit(EXIT_FAILURE);
     }
 
-    lua_getfield(L, -1, "resumeThreadId");
-    if (lua_isfunction(L, -1)) {
-        resume_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    } else {
-        fprintf(stderr, "resumeThreadId function not found in luaw scheduler\n");
-        exit(EXIT_FAILURE);
-    }
-
-    lua_getfield(L, -1, "startRequestThread");
-    if (lua_isfunction(L, -1)) {
-        start_req_thread_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    } else {
-        fprintf(stderr, "startRequestThread function not found in luaw scheduler\n");
-        exit(EXIT_FAILURE);
-    }
-
-    lua_getfield(L, -1, "runReadyThreads");
-    if (lua_isfunction(L, -1)) {
-        run_ready_threads_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    } else {
-        fprintf(stderr, "runReadyThreads function not found in luaw scheduler\n");
-        exit(EXIT_FAILURE);
-    }
+    resume_thread_fn_ref = register_function(L, "resumeThreadId");
+    start_req_thread_fn_ref = register_function(L, "startRequestThread");
+    run_ready_threads_fn_ref = register_function(L, "runReadyThreads");
     lua_pop(L, 1);
-
-    lua_getglobal(L, "luaw_server_config");
-    if (lua_istable(L, -1)) {
-        lua_getfield(L, -1, "server_ip");
-        if (lua_isstring(L, -1)) {
-            server_ip = (char *)lua_tostring(L, -1);
-            lua_pop(L, 1);
-        }
-
-        lua_getfield(L, -1, "server_port");
-        if (lua_isnumber(L, -1)) {
-            server_port = lua_tointeger(L, -1);
-            lua_pop(L, 1);
-        }
-
-        lua_pop(L, 1);  //pop luaw_server_config object
-    }
-
-    event_loop = uv_default_loop();
-}
-
-/* create a new lua coroutine to service this conn, anchor it in "all active coroutines"
-*  global table to prevent it from being garbage collected and start the coroutine
-*/
-LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
-    if (status) {
-        raise_lua_error(l_global, "Error in on_server_connect callback: %s\n", uv_strerror(status));
-        return;
-    }
-
-    lua_rawgeti(l_global, LUA_REGISTRYINDEX, start_req_thread_fn_ref);
-    assert(lua_isfunction(l_global, -1));
-
-    connection_t * conn = new_connection();
-    if (conn == NULL) {
-        raise_lua_error(l_global, "Could not allocate memory for client connection");
-        return;
-    }
-    lua_pushlightuserdata(l_global, conn);
     
-    status = uv_accept(server, (uv_stream_t*)&conn->handle);
-    if (status) {
-        close_connection(conn, status);
-        fprintf(stderr, "Error accepting incoming conn: %s\n", uv_strerror(status));
-        return;
-    }
-
-    status = lua_pcall(l_global, 1, 2, 0);
-    if (status) {
-        fprintf(stderr, "**** Error starting new client connect thread: %s (%d) ****\n", lua_tostring(l_global, -1), status);
-    }
-}
-
-void start_server(lua_State *L) {
-    fprintf(stderr, "starting server on port %d ...\n", server_port);
-
-    struct sockaddr_in addr;
-    int err_code = uv_ip4_addr(server_ip, server_port, &addr);
-    if (err_code) {
-        fprintf(stderr, "Error initializing socket address: %s\n", uv_strerror(err_code));
-        exit(EXIT_FAILURE);
-    }
-
-    uv_tcp_init(event_loop, &server);
-
-    err_code = uv_tcp_bind(&server, (const struct sockaddr*) &addr, 0);
-    if (err_code) {
-        fprintf(stderr, "Error binding to port %d : %s\n", server_port, uv_strerror(err_code));
-        exit(EXIT_FAILURE);
-    }
-
-    err_code = uv_listen((uv_stream_t*)&server, 128, on_server_connect);
-    if (err_code) {
-        fprintf(stderr, "Error listening on port %d : %s\n", server_port, uv_strerror(err_code));
-        exit(EXIT_FAILURE);
-    }
-
+    event_loop = uv_default_loop();
     uv_signal_init(event_loop, &shutdown_signal);
-    uv_signal_start(&shutdown_signal, handle_shutdown_req, SIGHUP);
+    uv_signal_start(&shutdown_signal, handle_shutdown_req, SIGHUP);    
 }
 
 static void run_user_threads() {
@@ -198,6 +107,7 @@ static int server_loop(lua_State *L) {
     uv_walk(event_loop, close_walk_cb, NULL);
     uv_run(event_loop, UV_RUN_ONCE);
     uv_loop_delete(event_loop);
+    close_listeners();
     lua_close(L);
 	close_syslog();
 
@@ -207,7 +117,7 @@ static int server_loop(lua_State *L) {
 static void run_lua_file(const char* filename) {
     int status = luaL_dofile(l_global, filename);
     if (status != LUA_OK) {
-        fprintf(stderr, "Error while ruunning script: %s\n", filename);
+        fprintf(stderr, "Error while running script: %s\n", filename);
         fprintf(stderr, "%s\n", lua_tostring(l_global, -1));
         exit(EXIT_FAILURE);
     }
@@ -222,7 +132,7 @@ static void set_lua_path(lua_State* L) {
 
 int main (int argc, char* argv[]) {
 	if (argc < 2) {
-		fprintf(stderr, "Usage: %s <luaw config file >\n", argv[0]);
+		fprintf(stderr, "Usage: %s <luaw config scripts>\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -237,8 +147,8 @@ int main (int argc, char* argv[]) {
     luaw_init_libs(l_global);
     luaopen_lfs(l_global);
     lua_gc(l_global, LUA_GCRESTART, 0);
-
     set_lua_path(l_global);
+    
     /* run lua on startup scripts passed on the command line */
     for (int i = 1; i < argc; i++) {
         fprintf(stderr, "## Running %s \n", argv[i]);
@@ -246,8 +156,12 @@ int main (int argc, char* argv[]) {
     }
 
     init_luaw_server(l_global);
-    start_server(l_global);
-    int status = server_loop(l_global);
-
+    int status = start_listeners();
+    if (status) {
+        fprintf(stderr, "Error while starting listeners: %s\n", uv_strerror(status));
+        exit(status);
+    }
+    
+    status = server_loop(l_global);
     exit(status);
 }

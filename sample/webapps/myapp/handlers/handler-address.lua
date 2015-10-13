@@ -2,11 +2,13 @@ registerHandler {
     method = 'GET',
     path = 'address/:city/#zip',
 
-    handler = function(req, resp)
+    handler = function(httpConn)
         address = {
-            city = req.pathParams.city,
-            zip = req.pathParams.zip
+            city = httpConn.pathParams.city,
+            zip = httpConn.pathParams.zip
         }
-        resp:renderView('/views/view-address.lua', address)
+        httpConn:renderView('/views/view-address.lua', address)
     end
 }
+
+

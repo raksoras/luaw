@@ -2,8 +2,10 @@ registerHandler {
     method = 'GET',
     path = 'helloworld',
 
-    handler = function(req, resp)
-        resp:appendBody("Hello World!\n")
+    handler = function(httpConn)
+        httpConn:appendBody("Hello World from ")
+        httpConn:appendBody(httpConn:getBody())
+        httpConn:appendBody("\n")
     end
 }
 

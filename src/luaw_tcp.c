@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -38,6 +39,7 @@
 #include "luaw_buffer.h"
 #include "luaw_tcp.h"
 
+static tcp_listener_t* listeners = NULL;
 
 connection_t* new_connection() {
     connection_t* conn = (connection_t*)calloc(1, sizeof(connection_t));
@@ -124,7 +126,7 @@ void close_connection(connection_t* conn, const int status) {
         conn->lua_writer_tid = 0;
         resume_lua_thread(l_global, 3, 2, 0);
     }
-    
+   
     uv_timer_stop(&conn->read_timer);
     close_if_active((uv_handle_t*)&conn->read_timer, (uv_close_cb)free_timer);
 
@@ -165,7 +167,7 @@ LIBUV_CALLBACK static void on_alloc(uv_handle_t* handle, size_t suggested_size, 
     buf->len = 0;
     connection_t* conn = GET_CONN_OR_RETURN(handle);
     
-    size_t free_space = buffer_remaining_capacity(conn->read_buffer);
+    size_t free_space = remaining_capacity(conn->read_buffer);
     if (free_space > 0) {
         buf->base = buffer_fill_start_pos(conn->read_buffer);
         buf->len = free_space;
@@ -190,7 +192,7 @@ LIBUV_API static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t
         /* either EOF or read error, in either case close connection */
         close_connection(conn, nread);
     }
-    
+
     buff_t* read_buffer = conn->read_buffer;
     if ((nread > 0)&&(read_buffer != NULL)&&(conn->lua_reader_tid != 0)) {
         /* new additional data available for read */
@@ -230,7 +232,7 @@ LUA_LIB_METHOD static int start_reading(lua_State *l_thread) {
         close_connection(conn, err_code);
         return 2;
     }
-
+    
     lua_pushboolean(l_thread, 1);
     return 1;
 }
@@ -251,7 +253,7 @@ LUA_LIB_METHOD static int read_check(lua_State* l_thread) {
         close_connection(conn, UV_EAI_OVERFLOW);
         return error_to_lua(l_thread, "buffer passed to read() is already full");
     }
-    
+
     int lua_reader_tid = lua_tointeger(l_thread, 3);
     if (lua_reader_tid == 0) {
         close_connection(conn, UV_EINVAL);
@@ -262,7 +264,7 @@ LUA_LIB_METHOD static int read_check(lua_State* l_thread) {
     conn->read_buffer = read_buffer;
     conn->lua_reader_tid = lua_reader_tid;
     start_timer(&conn->read_timer, readTimeout);
-    
+
     lua_pushboolean(l_thread, 1);
     lua_pushinteger(l_thread, read_buffer->end);
     return 2;
@@ -327,21 +329,23 @@ LUA_LIB_METHOD static int write_buffer(lua_State* l_thread) {
         lua_pop(l_thread, 1);
     }
 
-    /* non empty write buffer. Send write request, record writer tid and block in lua */
-    int writeTimeout = lua_tointeger(l_thread, 5);
-    int err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, uv_buffs, buff_count, on_write);
-    free(uv_buffs);
-    if (err_code) {
-        close_connection(conn, err_code);
-        lua_pushboolean(l_thread, 0);
-        lua_pushstring(l_thread,  uv_strerror(err_code));
-        return 2;
-    }
+    if (nwritten > 0) {
+        /* non empty write buffer. Send write request, record writer tid and block in lua */
+        int writeTimeout = lua_tointeger(l_thread, 5);
+        int err_code = uv_write(&conn->write_req, (uv_stream_t*)&conn->handle, uv_buffs, buff_count, on_write);
+        free(uv_buffs);
+        if (err_code) {
+            close_connection(conn, err_code);
+            lua_pushboolean(l_thread, 0);
+            lua_pushstring(l_thread,  uv_strerror(err_code));
+            return 2;
+        }
 
-    conn->write_req.data = conn;
-    INCR_REF_COUNT(conn)
-    conn->lua_writer_tid = lua_writer_tid;
-    start_timer(&conn->write_timer, writeTimeout);
+        conn->write_req.data = conn;
+        INCR_REF_COUNT(conn)
+        conn->lua_writer_tid = lua_writer_tid;
+        start_timer(&conn->write_timer, writeTimeout);
+    }
 
     lua_pushboolean(l_thread, 1);
     lua_pushinteger(l_thread, nwritten);
@@ -487,11 +491,131 @@ LUA_LIB_METHOD static int dns_resolve(lua_State* l_thread) {
 }
 
 
+/* create a new lua coroutine to service this conn, anchor it in "all active coroutines"
+*  global table to prevent it from being garbage collected and start the coroutine
+*/
+LIBUV_CALLBACK static void on_server_connect(uv_stream_t* server, int status) {
+    if (status) {
+        raise_lua_error(l_global, "Error in on_server_connect callback: %s\n", uv_strerror(status));
+        return;
+    }
+    
+    lua_rawgeti(l_global, LUA_REGISTRYINDEX, start_req_thread_fn_ref);
+    if (!lua_isfunction(l_global, -1)) {
+        raise_lua_error(l_global, "Invalid resume thread function");
+        return;    
+    }
+    
+    tcp_listener_t* listener = (tcp_listener_t *)server->data;
+    lua_rawgeti(l_global, LUA_REGISTRYINDEX, listener->handler_fn_ref);
+    if (!lua_isfunction(l_global, -1)) {
+        raise_lua_error(l_global, "Invalid listener handler function");
+        return;    
+    }
+
+    connection_t * conn = new_connection();
+    if (conn == NULL) {
+        raise_lua_error(l_global, "Could not allocate memory for client connection");
+        return;
+    }
+    lua_pushlightuserdata(l_global, conn);
+
+    status = uv_accept(server, (uv_stream_t*)&conn->handle);
+    if (status) {
+        close_connection(conn, status);
+        fprintf(stderr, "Error accepting incoming conn: %s\n", uv_strerror(status));
+        return;
+    }
+
+    status = lua_pcall(l_global, 2, 2, 0);
+    if (status) {
+        fprintf(stderr, "**** Error starting new client connect thread: %s (%d) ****\n", lua_tostring(l_global, -1), status);
+    }
+}
+
+/*
+* tcp_lib.listen("0.0.0.0", 80, serviceHTTP)
+*/
+LUA_LIB_METHOD static int tcp_listen(lua_State* L) {
+    const char* ip = lua_tostring(L, 1);
+    if (ip == NULL) {
+        return raise_lua_error(L, "Missing listening IP address");
+    }
+    
+    int port = lua_tointeger(L, 2);
+    if (port == 0) {
+        return raise_lua_error(L, "Missing/incorrect listening port");
+    }
+    
+    int handler_fn_ref;
+    if (lua_isfunction(L, 3)) {
+        handler_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        return raise_lua_error(L, "Missing/invalid listener handler");
+    }
+    
+    tcp_listener_t* l = malloc(sizeof(tcp_listener_t));
+    if (l == NULL) {
+        return raise_lua_error(L, "Could not allocate memory for listener");
+    }
+    
+    l->port = port;
+    l->handler_fn_ref = handler_fn_ref; 
+    l->listen_sock.data = l;
+    if (listeners == NULL) {
+        listeners = l;
+        l->next = NULL;
+    } else {
+        tcp_listener_t* tmp = listeners;
+        listeners = l;
+        l->next = tmp;
+    }
+    
+    struct sockaddr_in addr;
+    int err_code = uv_ip4_addr(ip, port, &addr);
+    if (err_code) {
+        return raise_lua_error(L, "Error initializing socket address: %s\n", uv_strerror(err_code));
+    }
+
+    uv_tcp_init(uv_default_loop(), &l->listen_sock);
+    err_code = uv_tcp_bind(&l->listen_sock, (const struct sockaddr*)&addr, 0);
+    if (err_code) {
+        raise_lua_error(L, "Error binding to port %d : %s\n", port, uv_strerror(err_code));
+    }
+    
+    return 0;
+}
+
+int start_listeners() {
+    tcp_listener_t* l;
+    for(l = listeners; l; l = l->next) {
+        int err_code = uv_listen((uv_stream_t*)&(l->listen_sock), 128, on_server_connect);
+        if (err_code) {
+            fprintf(stderr, "Error listening on port %d : %s\n", l->port, uv_strerror(err_code));
+            return err_code;
+        }            
+        fprintf(stdout, "started listener on port %d ...\n", l->port);
+    }
+    return 0;
+}
+
+void close_listeners() {
+    tcp_listener_t* l = listeners;
+    tcp_listener_t* tmp;
+    while(l != NULL) {
+        tmp = l;
+        l = l->next;
+        free(tmp);
+    }
+}
+
 static const struct luaL_Reg luaw_buffer_methods[] = {
     {"free", free_buffer},    
     {"capacity", buffer_capacity},
+    {"position", buffer_position},
     {"length", buffer_length},
     {"remainingLength", buffer_remaining_content_len},
+    {"remainingCapacity", buffer_remaining_capacity},
     {"remainingContent", buffer_remaining_content},
     {"append", append},
     {"resize", resize},
@@ -511,6 +635,7 @@ static const struct luaL_Reg luaw_tcp_lib[] = {
     {"newBuffer", new_buffer},
     {"connect", client_connect},
     {"resolveDNS", dns_resolve},
+    {"listen", tcp_listen},
     {NULL, NULL}  /* sentinel */
 };
 

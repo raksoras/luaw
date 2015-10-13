@@ -30,10 +30,10 @@ return {
     END_OF_THREAD = luaw_constant("END_OF_THREAD"),
 
     -- TCP constants
-    DEFAULT_CONNECT_TIMEOUT = luaw_server_config.connect_timeout or 8000,
-    DEFAULT_READ_TIMEOUT = luaw_server_config.read_timeout or 3000,
-    DEFAULT_WRITE_TIMEOUT = luaw_server_config.write_timeout or 3000,
-    CONN_BUFFER_SIZE = luaw_server_config.connection_buffer_size or 4096,
+    DEFAULT_CONNECT_TIMEOUT = luaw_server_config and luaw_server_config.connect_timeout or 8000,
+    DEFAULT_READ_TIMEOUT = luaw_server_config and luaw_server_config.read_timeout or 3000,
+    DEFAULT_WRITE_TIMEOUT = luaw_server_config and luaw_server_config.write_timeout or 3000,
+    CONN_BUFFER_SIZE = luaw_server_config and luaw_server_config.connection_buffer_size or 4096,
 
     -- HTTP parser constants
     EOF = 0,

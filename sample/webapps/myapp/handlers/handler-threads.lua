@@ -13,7 +13,7 @@ registerHandler {
     method = 'GET',
     path = '/threads',
 
-    handler = function(req, resp)
+    handler = function(httpConn)
         local t1 = scheduler.startNewThread(timerFn, 1, 2000)
         local t2 = scheduler.startNewThread(timerFn, 2, 5000)
         local t3 = scheduler.startNewThread(timerFn, 3, 7000)
@@ -23,6 +23,6 @@ registerHandler {
         print(t2:join())
         print("Handler resumed")
         
-        resp:appendBody('OK')
+        httpConn:appendBody('OK')
     end
 }

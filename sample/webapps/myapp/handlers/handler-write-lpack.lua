@@ -108,10 +108,10 @@ registerHandler {
     method = 'GET',
     path = 'genlpack',
 
-    handler = function(req, resp)
-        resp:setStatus(200)
-        local lpackWriter = lpack.newLPackRespWriter(resp)
-        if (req.params['dict'] == 'true') then
+    handler = function(httpConn)
+        httpConn:setStatus(200)
+        local lpackWriter = lpack.newLPackRespWriter(httpConn)
+        if (httpConn.params['dict'] == 'true') then
             lpackWriter:useDictionary(dict)
         end
         lpackWriter:write(mesg)

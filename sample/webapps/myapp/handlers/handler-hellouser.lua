@@ -2,8 +2,8 @@ registerHandler {
     method = 'GET',
     path = '/user/:username/#count',
 
-	handler = function(req, resp)
-		resp:appendBody("Hello "..req.pathParams.username.."! You are user number "..req.pathParams.count.." to visit this site.")
+	handler = function(httpConn)
+		httpConn:appendBody("Hello "..httpConn.pathParams.username.."! You are user number "..httpConn.pathParams.count.." to visit this site.")
 	end
 }
 

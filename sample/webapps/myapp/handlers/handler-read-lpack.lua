@@ -6,7 +6,7 @@ registerHandler {
     method = 'GET',
     path = 'readlpack',
 
-    handler = function(req, resp)
+    handler = function(httpConn)
         local backendReq = http_lib.newClientHttpRequest()
         backendReq.hostName = 'localhost'
         backendReq.port = 7001

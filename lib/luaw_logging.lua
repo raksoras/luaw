@@ -53,7 +53,7 @@ log_module.INFO = INFO
 log_module.DEBUG = DEBUG
 
 -- Log appender types
-local FILE_LOG = "FILE"
+local CONSOLE_LOG = "CONSOLE"
 local SYS_LOG = "SYSLOG"
 
 log_module.SYSLOG_FACILITY_USER = 1
@@ -71,24 +71,14 @@ log_module.SYSLOG_FACILITY_LOCAL7 = 23
 
 local logRoot = { }
 
-local logDir = assert(luaw_log_config.log_dir, "Invalid log directory specified")
-local noOfLogLinesToBuffer = luaw_log_config.log_lines_buffer_count or 100
-local logfileBaseName = luaw_log_config.log_file_basename or "luaw-log"
-local logfileSizeLimit = luaw_log_config.log_file_size_limit or (1024 * 1024 * 10) -- 10MB
-local logfileCountLimit = luaw_log_config.log_file_count_limit or 99
-local logLineTimeFormat = luaw_log_config.log_line_timestamp_format or "%x %X"
-local logFileNameTimeFormat = luaw_log_config.log_filename_timestamp_format or '%Y%m%d-%H%M%S'
+local syslogTag = luaw_log_config and luaw_log_config.syslog_tag or 'luaw'
+local syslogPresent = false
+if (luaw_log_config and luaw_log_config.syslog_server and luaw_log_config.syslog_port) then 
+    syslogPresent = luaw_logging_lib.syslogConnect(luaw_log_config.syslog_server, luaw_log_config.syslog_port)
+end
+logRoot.facility = luaw_log_config and luaw_log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
 
-local syslogTag = luaw_log_config.syslog_tag or 'luaw'
-local syslogPresent = luaw_logging_lib.syslogConnect(luaw_log_config.syslog_server, luaw_log_config.syslog_port)
-logRoot.facility = luaw_log_config.syslog_facility or log_module.SYSLOG_FACILITY_LOCAL7
 local hostname = luaw_logging_lib.hostname()
-
-
-local logSequenceNum = 0
-local logSize = 0
-local logBuffer = ds_lib.newOverwrittingRingBuffer(noOfLogLinesToBuffer + 32)
-local noOfLogLinesDropped = 0
 
 local currentTimeStr
 local syslogTimeStr
@@ -97,46 +87,6 @@ log_module.updateCurrentTime = function(currentTime)
     currentTimeStr = os.date(logLineTimeFormat, currentTime)
     if syslogPresent then
         syslogTimeStr = os.date("%b %d %X", currentTime)
-    end
-end
-
-local function nextLogSequenceNum()
-    if logSequenceNum > logfileCountLimit then logSequenceNum = 0 end
-    logSequenceNum = logSequenceNum + 1
-    return logSequenceNum
-end
-
-local function concatLogLines()
-    local temp = luapack_lib.createDict(logBuffer.filled+1, 0)
-    local i = 1
-    local logLine = logBuffer:take()
-    while logLine do
-        temp[i] = logLine
-        i = i+1
-        logLine = logBuffer:take()
-    end
-    temp[i] = '' -- for the last newline
-    return table.concat(temp, '\n')
-end
-
-local function logToFile(logLine)
-    local added = logBuffer:offer(currentTimeStr..' '..logLine)
-    if not added then noOfLogLinesDropped = noOfLogLinesDropped +1 end
-
-    local state = luaw_logging_lib.logState()
-
-    if ((state == LOG_IS_OPEN)and(logBuffer.filled >= noOfLogLinesToBuffer)) then
-        local logBatch = concatLogLines()
-        logSize = logSize + string.len(logBatch)
-        local rotateLog = (logSize >= logfileSizeLimit)
-        state = luaw_logging_lib.writeLog(logBatch, rotateLog)
-    end
-
-    if (state == LOG_NOT_OPEN) then
-        logSize = 0
-        local ts = os.date(logFileNameTimeFormat, os.time())
-        local fileName = logDir..PATH_SEPARATOR..logfileBaseName..'-'..ts..'-'..nextLogSequenceNum()..'.log'
-        luaw_logging_lib.openLog(fileName)
     end
 end
 
@@ -154,7 +104,7 @@ end
 
 local function logInternal(logLevel, fileLevel, syslogLevel, syslogFacility, mesg)
     if (logLevel <= fileLevel) then
-        logToFile(mesg)
+        io.write(mesg)
     end
     if ((syslogPresent)and(logLevel <= syslogLevel)) then
         syslog(logLevel, syslogFacility, mesg)
@@ -162,13 +112,13 @@ local function logInternal(logLevel, fileLevel, syslogLevel, syslogFacility, mes
 end
 
 local function log(logger, logLevel, mesg)
-    local fileLevel = logger[FILE_LOG] or ERROR
+    local fileLevel = logger[CONSOLE_LOG] or ERROR
     local syslogLevel = logger[SYS_LOG] or ERROR
     logInternal(logLevel, fileLevel, syslogLevel, logger.facility, mesg)
 end
 
 local function logf(logger, logLevel, mesgFormat, ...)
-    local fileLevel = logger[FILE_LOG] or ERROR
+    local fileLevel = logger[CONSOLE_LOG] or ERROR
     local syslogLevel = logger[SYS_LOG] or ERROR
     if ((logLevel <= fileLevel)or(logLevel <= syslogLevel)) then
         local mesg = string.format(mesgFormat, ...)
@@ -270,8 +220,8 @@ local function configureLogger(logCfg, logType)
     return logger
 end
 
-log_module.file = function(logCfg)
-    configureLogger(logCfg, FILE_LOG)
+log_module.console = function(logCfg)
+    configureLogger(logCfg, CONSOLE_LOG)
 end
 
 log_module.syslog = function(logCfg)

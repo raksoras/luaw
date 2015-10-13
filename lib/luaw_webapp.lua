@@ -72,7 +72,7 @@ end
 
 local function findAction(method, path)
     assert(method, "HTTP method may not be nil")
-    assert(method, "HTTP request path may not be nil")
+    assert(path, "HTTP request path may not be nil")
 
     local webApp = nil
     local route = nil
@@ -128,10 +128,10 @@ local function findAction(method, path)
     end
 end
 
-local function renderView(resp, viewPath, model)
-    local compiledView = resp.luaw_views[viewPath]
+local function renderView(httpConn, viewPath, model)
+    local compiledView = httpConn.luaw_views[viewPath]
     if (not compiledView) then
-        resp:appendBody('Missing view definition: '..viewPath)
+        httpConn:appendBody('Missing view definition: '..viewPath)
         return
     end
 
@@ -141,24 +141,24 @@ local function renderView(resp, viewPath, model)
     local attributes = function(attrs)
         if attrs then
             for k,v in pairs(attrs) do
-                resp:appendBody(' ')
-                resp:appendBody(k)
-                resp:appendBody('="')
-                resp:appendBody(tostring(v))
-                resp:appendBody('"')
+                httpConn:appendBody(' ')
+                httpConn:appendBody(k)
+                httpConn:appendBody('="')
+                httpConn:appendBody(tostring(v))
+                httpConn:appendBody('"')
             end
         end
     end
 
     local BEGIN = function(tag)
         if (isTagOpen) then
-            resp:appendBody('>\n')
+            httpConn:appendBody('>\n')
         end
         for i=1, indent do
-            resp:appendBody(TAB)
+            httpConn:appendBody(TAB)
         end
-        resp:appendBody('<')
-        resp:appendBody(tag)
+        httpConn:appendBody('<')
+        httpConn:appendBody(tag)
         isTagOpen = true;
         indent = indent+1
         return attributes
@@ -166,7 +166,7 @@ local function renderView(resp, viewPath, model)
 
     local END = function(tag)
         if (isTagOpen) then
-            resp:appendBody('>\n')
+            httpConn:appendBody('>\n')
             isTagOpen = false;
         end
 
@@ -177,69 +177,69 @@ local function renderView(resp, viewPath, model)
             indent = 0
         end
         for i=1, indent do
-            resp:appendBody(TAB)
+            httpConn:appendBody(TAB)
         end
 
-        resp:appendBody('</')
-        resp:appendBody(tag)
-        resp:appendBody('>\n')
+        httpConn:appendBody('</')
+        httpConn:appendBody(tag)
+        httpConn:appendBody('>\n')
     end
 
     local TEXT = function(...)
         if (isTagOpen) then
-            resp:appendBody('>\n')
+            httpConn:appendBody('>\n')
             isTagOpen = false;
         end
         for i=1, indent do
-            resp:appendBody(TAB)
+            httpConn:appendBody(TAB)
         end
         local values = {...}
         for i,v in ipairs(values) do
-            resp:appendBody(tostring(v))
-            resp:appendBody(' ')
+            httpConn:appendBody(tostring(v))
+            httpConn:appendBody(' ')
         end
-        resp:appendBody('\n')
+        httpConn:appendBody('\n')
     end
 
     -- render view
-    if (resp.luaw_view_chunked) then
-        resp:startStreaming()
+    if (httpConn.luaw_view_chunked) then
+        httpConn:startStreaming()
     end
     
-    compiledView(resp, model, BEGIN, TEXT, END)
+    compiledView(httpConn, model, BEGIN, TEXT, END)
 end
 
-local function dispatch(req, resp)
-    assert(req, "HTTP request may not be nil")
-    local parsedURL = req.parsedURL
+local function dispatch(httpConn)
+    assert(httpConn, "HTTP connection may not be nil")
+    local parsedURL = httpConn.parsedURL
 
-    if not(req.method and  parsedURL) then
+    if not(httpConn.method and  parsedURL) then
         return false, "No URL found in HTTP request"
     end
 
-    local webApp, action, pathParams = findAction(req.method, parsedURL.path)
-    assert(action, "No action found for path "..parsedURL.path.." for method "..req.method)
+    local webApp, action, pathParams = findAction(httpConn.method, parsedURL.path)
+    assert(action, "No action found for path "..parsedURL.path.." for method "..httpConn.method)
 
-    req.pathParams = pathParams
-    resp.luaw_views = webApp.compiledViews    
-    if req:shouldCloseConnection() then
-        resp.headers['Connection'] = 'close'
+    httpConn.pathParams = pathParams
+    httpConn.luaw_views = webApp.compiledViews    
+    if httpConn:shouldCloseConnection() then
+        httpConn.responseHeaders['Connection'] = 'close'
     else
-        resp.headers['Connection'] = 'Keep-Alive'
+        httpConn.responseHeaders['Connection'] = 'Keep-Alive'
     end
 
-    resp.renderView = renderView
+    httpConn.renderView = renderView
     -- use chunked encoding response if request was HTTP 1.1 or greater
-    if ((req.major_version >= 1)and(req.minor_version >= 1)) then
-        resp.luaw_view_chunked = true
+    if ((httpConn.major_version >= 1)and(httpConn.minor_version >= 1)) then
+        httpConn.luaw_view_chunked = true
     end
-    action.handler(req, resp, pathParams)
+    action.handler(httpConn)
     -- Consume any outstanding bytes of the current request just in case some badly written
     -- user handler returns prematurely without reading the request fully. Such incomplete
     -- readers may cause issues in processing subsequent requests in case of HTTP pipelining.
-    req:readBody()
-    
-    resp:flush()
+    httpConn:readBody()
+
+    httpConn:flush()
 end
 
 local function registerResource(resource)
@@ -288,20 +288,21 @@ local function registerResource(resource)
 end
 
 local function serviceHTTP(rawConn)
-    local conn = luaw_tcp_lib.wrapConnection(rawConn)
-    local req = luaw_http_lib.newServerHttpRequest(conn)
-    local resp = luaw_http_lib.newServerHttpResponse(conn)
-    conn:startReading()
-    
+    local first = true
+
     -- loop to support HTTP 1.1 persistent (keep-alive) connections
     while true do    
-        req:reset()
-        resp:reset()
-
+        local conn = luaw_tcp_lib.wrapConnection(rawConn)
+        if (first) then
+            -- one time initialization
+            conn:startReading()
+            first = false
+        end
+        luaw_http_lib.addHttpServerMethods(conn)
+        
         -- read and parse request till HTTP headers
-        local status, errmesg = pcall(req.readHeaders, req)
-
-        if ((not status)or(req.luaw_EOF == true)) then
+        local status, errmesg = pcall(conn.readHeaders, conn)
+        if ((not status)or(conn.luaw_EOF == true)) then
             conn:close()
             if (status) then
                 return "read time out"
@@ -310,21 +311,23 @@ local function serviceHTTP(rawConn)
             return "connection reset by peer"
         end
 
-        status, errMesg = pcall(dispatch, req, resp)
+        status, errMesg = pcall(dispatch, conn)
         if (not status) then
             -- send HTTP error response
-            resp:setStatus(500)
-            resp:addHeader('Connection', 'close')
-            pcall(resp.appendBody, resp, errMesg)
-            pcall(resp.flush, resp)
+            conn.responseHeaders['Connection'] = 'close'
+            pcall(conn.appendBody, conn, errMesg)
+            pcall(conn.flush, conn)
             conn:close()
             error(errMesg)
         end
 
-        if (req:shouldCloseConnection() or resp:shouldCloseConnection()) then
+        if (conn:shouldCloseConnection()) then
             conn:close()
             return "connection reset by peer"
         end
+
+        --free bufffers
+        conn:free()
     end
 end
 
@@ -379,7 +382,7 @@ local function loadView(viewPath)
 
         if firstLine then
             firstLine = false
-            line = "return function(resp, model, BEGIN, TEXT, END) "
+            line = "return function(httpConn, model, BEGIN, TEXT, END) "
         else
             if (not lastLine) then
                 local vl = viewLines()
@@ -457,7 +460,7 @@ local function init()
 end
 
 -- install REST HTTP app handler as a default request handler
-scheduler.setRequestHandler(serviceHTTP)
+--scheduler.setRequestHandler(serviceHTTP)
 
 return {
     init = init,
