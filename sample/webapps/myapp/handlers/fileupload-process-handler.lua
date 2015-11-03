@@ -6,7 +6,7 @@ local function append(buffer, str)
 end
 
 
-registerHandler {
+webapp:registerResource {
   method = 'POST',
   path = 'filesupload',
 

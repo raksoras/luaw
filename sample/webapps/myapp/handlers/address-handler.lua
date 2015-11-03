@@ -1,4 +1,4 @@
-registerHandler {
+webapp:registerResource {
     method = 'GET',
     path = 'address/:city/#zip',
 
@@ -7,7 +7,7 @@ registerHandler {
             city = httpConn.pathParams.city,
             zip = httpConn.pathParams.zip
         }
-        httpConn:renderView('/views/view-address.lua', address)
+        httpConn:renderView('address-view.lua', address)
     end
 }
 

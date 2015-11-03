@@ -14,7 +14,7 @@ LUAW_OBJS= http_parser.o lua_lpack.o luaw_common.o luaw_logging.o luaw_buffer.o 
 LUAW_BIN= luaw
 LUAW_START_SCRIPT= start_luaw.sh
 LUAW_SCRIPTS= luapack.lua luaw_logging.lua luaw_data_structs_lib.lua luaw_utils.lua \
-luaw_scheduler.lua luaw_webapp.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
+luaw_scheduler.lua luaw_webcontainer.lua luaw_timer.lua luaw_tcp.lua luaw_http.lua luaw_constants.lua
 
 # How to install. If your install program does not support "-p", then
 # you may have to run ranlib on the installed liblua.a.

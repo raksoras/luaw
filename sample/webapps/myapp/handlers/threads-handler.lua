@@ -9,7 +9,7 @@ local function timerFn(id, delay)
     return(id.."# done")
 end
 
-registerHandler {
+webapp:registerResource {
     method = 'GET',
     path = '/threads',
 

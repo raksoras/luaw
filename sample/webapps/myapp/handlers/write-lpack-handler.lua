@@ -104,7 +104,7 @@ local dict = {
     big_str
 }
 
-registerHandler {
+webapp:registerResource {
     method = 'GET',
     path = 'genlpack',
 

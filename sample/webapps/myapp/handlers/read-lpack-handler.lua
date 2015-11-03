@@ -2,7 +2,7 @@ local utils_lib = require('luaw_utils')
 local http_lib = require('luaw_http')
 local lpack = require('luapack')
 
-registerHandler {
+webapp:registerResource {
     method = 'GET',
     path = 'readlpack',
 

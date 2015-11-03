@@ -1,4 +1,4 @@
-registerHandler {
+webapp:registerResource {
     method = 'GET',
     path = '/user/:username/#count',
 

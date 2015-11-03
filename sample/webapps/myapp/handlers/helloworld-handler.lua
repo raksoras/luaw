@@ -1,4 +1,4 @@
-registerHandler {
+webapp:registerResource {
     method = 'GET',
     path = 'helloworld',
 
@@ -8,4 +8,3 @@ registerHandler {
         httpConn:appendBody("\n")
     end
 }
-
