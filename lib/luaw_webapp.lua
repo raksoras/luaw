@@ -209,8 +209,8 @@ local function dispatchAction(req, resp)
 
     v1, v2 = action.handler(req, resp, pathParams)
 
-    -- handle action returned response, if any
-    if v1 then
+    -- handle action returned response, if any and if resp is not closed
+    if v1 and resp.luaw_conn then
         if (type(v1) == 'number') then
             -- v1 is HTTP status
             resp:setStatus(v1)
@@ -238,7 +238,8 @@ local function dispatchAction(req, resp)
         end
     end
 
-    resp:flush()
+    -- flush in case resp is not closed
+    if resp.luaw_conn then resp:flush() end
 end
 
 local function registerResource(resource)
